@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TeamFinder</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>TeamFinder</h1>
+      <p>UBC classmates, project teams, and study groups.</p>
+      <div class="pill">Current user: <span id="current-user">Not logged in</span></div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Auth</h2>
+        <form id="signup-form">
+          <input id="signup-name" placeholder="Name" required />
+          <input id="signup-email" type="email" placeholder="Email" required />
+          <input id="signup-password" type="password" placeholder="Password" required />
+          <button type="submit">Sign up</button>
+        </form>
+        <form id="login-form">
+          <input id="login-email" type="email" placeholder="Email" required />
+          <input id="login-password" type="password" placeholder="Password" required />
+          <button type="submit">Login</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Profile</h2>
+        <form id="profile-form">
+          <input id="profile-about" placeholder="About you" />
+          <input id="profile-skills" placeholder="Skills (comma separated)" />
+          <input id="profile-classes" placeholder="Classes (comma separated)" />
+          <input id="profile-availability" placeholder="Availability" />
+          <input id="profile-picture-url" placeholder="Profile picture URL (auto-filled after upload)" />
+          <button type="submit">Save profile</button>
+        </form>
+        <form id="profile-picture-form">
+          <input id="profile-picture-file" type="file" accept="image/*" />
+          <button id="upload-profile-picture" type="submit">Upload picture</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Classes + Groups</h2>
+        <div class="row">
+          <input id="class-query" placeholder="Search classes (e.g., CPSC)" />
+          <button id="search-classes" type="button">Search</button>
+        </div>
+        <pre id="class-results"></pre>
+
+        <form id="enroll-form">
+          <input id="enroll-class-id" placeholder="Class ID (e.g., CPSC210)" required />
+          <button type="submit">Enroll</button>
+        </form>
+
+        <div class="row">
+          <input id="members-class-id" placeholder="Class ID for roster" />
+          <button id="load-members" type="button">Load members</button>
+        </div>
+        <pre id="member-results"></pre>
+
+        <form id="create-group-form">
+          <input id="group-class-id" placeholder="Class ID" required />
+          <input id="group-name" placeholder="Group name" required />
+          <input id="group-section" placeholder="Project section" required />
+          <button type="submit">Create group</button>
+        </form>
+
+        <form id="request-group-form">
+          <input id="request-group-id" placeholder="Group ID" required />
+          <button type="submit">Request to join group</button>
+        </form>
+
+        <div class="row">
+          <input id="group-requests-group-id" placeholder="Group ID for requests" />
+          <button id="load-group-requests" type="button">Load requests</button>
+        </div>
+        <pre id="group-request-results"></pre>
+
+        <form id="approve-group-request-form">
+          <input id="approve-group-id" placeholder="Group ID" required />
+          <input id="approve-user-id" placeholder="User ID to approve" required />
+          <button type="submit">Approve request</button>
+        </form>
+
+        <form id="reject-group-request-form">
+          <input id="reject-group-id" placeholder="Group ID" required />
+          <input id="reject-user-id" placeholder="User ID to reject" required />
+          <button type="submit">Reject request</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Messaging</h2>
+        <form id="conversation-form">
+          <input id="conversation-type" placeholder="Type: DM | CLASS | GROUP" required />
+          <input id="conversation-members" placeholder="Member user IDs (comma separated)" required />
+          <input id="conversation-class-id" placeholder="Class ID (optional)" />
+          <input id="conversation-group-id" placeholder="Group ID (optional)" />
+          <button type="submit">Create conversation</button>
+        </form>
+
+        <form id="send-message-form">
+          <input id="message-conversation-id" placeholder="Conversation ID" required />
+          <input id="message-body" placeholder="Message" required />
+          <button type="submit">Send message</button>
+        </form>
+
+        <div class="row">
+          <input id="messages-conversation-id" placeholder="Conversation ID" />
+          <button id="load-messages" type="button">Load messages</button>
+        </div>
+        <pre id="message-results"></pre>
+      </section>
+
+      <section>
+        <h2>Recommendations</h2>
+        <button id="load-recommendations" type="button">Load recommendations</button>
+        <pre id="recommendation-results"></pre>
+      </section>
+
+      <section>
+        <h2>Activity</h2>
+        <pre id="activity-log"></pre>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

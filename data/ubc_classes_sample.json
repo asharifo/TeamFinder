@@ -1,0 +1,40 @@
+{
+  "classes": [
+    {
+      "id": "CPSC304",
+      "title": "Introduction to Relational Databases",
+      "term": "2026W",
+      "description": "Data models, SQL, normalization, and transaction processing."
+    },
+    {
+      "id": "CPSC310",
+      "title": "Introduction to Software Engineering",
+      "term": "2026W",
+      "description": "Team-based software engineering project and architecture."
+    },
+    {
+      "id": "CPSC313",
+      "title": "Computer Hardware and Operating Systems",
+      "term": "2026W",
+      "description": "Computer architecture, concurrency, and OS fundamentals."
+    },
+    {
+      "id": "CPSC317",
+      "title": "Internet Computing",
+      "term": "2026W",
+      "description": "Network protocols and distributed web systems."
+    },
+    {
+      "id": "COMM292",
+      "title": "Managerial and Cost Accounting",
+      "term": "2026W",
+      "description": "Accounting principles for managerial decisions."
+    },
+    {
+      "id": "ELEC201",
+      "title": "Circuit Analysis I",
+      "term": "2026W",
+      "description": "Linear circuit analysis techniques and applications."
+    }
+  ]
+}
