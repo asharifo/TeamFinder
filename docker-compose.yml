@@ -12,10 +12,8 @@ services:
     restart: unless-stopped
 
   web:
-    image: nginx:1.27-alpine
+    build: ./apps/web
     container_name: web
-    volumes:
-      - ./apps/web:/usr/share/nginx/html:ro
     restart: unless-stopped
 
   gateway:
@@ -85,6 +83,8 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@class-db:5432/class_db
       - KAFKA_BROKER=kafka:9092
       - INGEST_TOKEN=dev-ingest-token
+      - MESSAGING_SERVICE_URL=http://messaging-service:3004
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-service-token}
       - LOG_LEVEL=info
     depends_on:
       - class-db
@@ -101,6 +101,7 @@ services:
       - KAFKA_BROKER=kafka:9092
       - AUTH0_ISSUER_BASE_URL=${AUTH0_ISSUER_BASE_URL:-}
       - AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-dev-service-token}
       - LOG_LEVEL=info
     depends_on:
       - messaging-db
@@ -213,7 +214,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: minio
-    command: server /data --console-address \":9001\"
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -227,17 +228,18 @@ services:
   minio-init:
     image: minio/mc:latest
     container_name: minio-init
+    network_mode: "service:minio"
     depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      until /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
-      /usr/bin/mc mb --ignore-existing local/teamfinder-profile-images;
-      /usr/bin/mc anonymous set private local/teamfinder-profile-images;
-      printf '{\"CORSRules\":[{\"AllowedOrigins\":[\"*\"],\"AllowedMethods\":[\"GET\",\"PUT\",\"POST\",\"DELETE\",\"HEAD\"],\"AllowedHeaders\":[\"*\"],\"ExposeHeaders\":[\"ETag\"],\"MaxAgeSeconds\":3000}]}' > /tmp/cors.json;
-      /usr/bin/mc cors set local/teamfinder-profile-images /tmp/cors.json;
-      exit 0;
-      "
+      minio:
+        condition: service_started
+    environment:
+      - MINIO_URL=http://127.0.0.1:9000
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_BUCKET=teamfinder-profile-images
+    volumes:
+      - ./infra/minio/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
     restart: "no"
 
   loki:
@@ -252,6 +254,9 @@ services:
   vector:
     image: timberio/vector:0.38.0-alpine
     container_name: vector
+    command: ["--config", "/etc/vector/vector.toml"]
+    environment:
+      - VECTOR_LOG=error
     user: root
     volumes:
       - ./infra/vector/vector.toml:/etc/vector/vector.toml:ro

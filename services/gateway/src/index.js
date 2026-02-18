@@ -31,6 +31,15 @@ function normalizeHeaders(headers) {
   const out = { ...headers };
   delete out.host;
   delete out["content-length"];
+  delete out.connection;
+  delete out.Connection;
+  delete out.upgrade;
+  delete out.Upgrade;
+  delete out["proxy-connection"];
+  delete out["transfer-encoding"];
+  delete out.te;
+  delete out.trailer;
+  delete out["keep-alive"];
   delete out.authorization;
   delete out.Authorization;
   return out;
@@ -102,7 +111,8 @@ async function proxy(prefix, targetBase, request, reply) {
     const targetUrl = `${targetBase}${path}${query}`;
     const method = request.method.toUpperCase();
 
-    const { user, error } = await decodeUser(request);
+    const shouldDecodeUser = prefix !== "/api/auth";
+    const { user, error } = shouldDecodeUser ? await decodeUser(request) : { user: null, error: null };
     if (error && error !== null) {
       return reply.code(401).send({ error: "invalid or expired token" });
     }
@@ -140,7 +150,18 @@ async function proxy(prefix, targetBase, request, reply) {
 
     reply.code(upstream.status).header("content-type", contentType).send(body);
   } catch (error) {
-    request.log.error({ error, prefix, targetBase }, "proxy request failed");
+    request.log.error(
+      {
+        err: {
+          message: error?.message,
+          stack: error?.stack,
+          cause: error?.cause ? String(error.cause) : undefined,
+        },
+        prefix,
+        targetBase,
+      },
+      "proxy request failed",
+    );
     reply.code(502).send({ error: "upstream service unavailable" });
   }
 }

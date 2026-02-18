@@ -24,3 +24,10 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
 ON messages (conversation_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_members_user
+ON conversation_members (user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_group_unique
+ON conversations (group_id)
+WHERE type = 'GROUP' AND group_id IS NOT NULL;

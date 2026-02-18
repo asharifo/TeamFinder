@@ -1,26 +1,14 @@
 [sources.docker]
 type = "docker_logs"
 
-[transforms.normalize]
-type = "remap"
-inputs = ["docker"]
-source = '''
-parsed, err = parse_json(.message)
-if err == null {
-  . = merge(., parsed)
-}
-.service = .label.com_docker_compose_service ?? "unknown"
-.level = to_string(.level) ?? "info"
-'''
-
 [sinks.loki]
 type = "loki"
-inputs = ["normalize"]
+inputs = ["docker"]
 endpoint = "http://loki:3100"
 out_of_order_action = "accept"
 encoding.codec = "json"
 
 [sinks.loki.labels]
-service = "{{ service }}"
+service = "{{ label.com_docker_compose_service }}"
 container = "{{ container_name }}"
 level = "{{ level }}"
