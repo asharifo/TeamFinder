@@ -93,9 +93,7 @@ export default function ClassDetailPage() {
       setGroups(nextGroups);
       setSections(nextSections);
 
-      if (!newGroupSectionId && nextSections.length > 0) {
-        setNewGroupSectionId(nextSections[0].id);
-      }
+      setNewGroupSectionId((currentValue) => currentValue || (nextSections.length > 0 ? nextSections[0].id : ""));
 
       await loadOwnerRequests(nextGroups);
     } catch (fetchError) {
@@ -103,7 +101,7 @@ export default function ClassDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [apiFetch, classId, loadOwnerRequests, newGroupSectionId]);
+  }, [apiFetch, classId, loadOwnerRequests]);
 
   useEffect(() => {
     loadClassData();

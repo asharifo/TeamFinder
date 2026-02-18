@@ -201,7 +201,7 @@ async function ensureSchema() {
 
   await pool.query(
     `INSERT INTO project_sections (class_id, name, description, max_group_size, created_by_user_id)
-     SELECT DISTINCT g.class_id, g.project_section, '', $1, 'system'
+     SELECT DISTINCT g.class_id, g.project_section, '', $1::int, 'system'
      FROM groups g
      WHERE COALESCE(g.project_section, '') <> ''
      ON CONFLICT (class_id, name) DO NOTHING`,
@@ -320,11 +320,19 @@ async function loadGroupForUpdate(groupId, client) {
             g.project_section,
             g.project_section_id,
             g.created_at,
-            COALESCE(ps.name, g.project_section) AS project_section_name,
-            COALESCE(ps.description, '') AS project_section_description,
-            COALESCE(ps.max_group_size, $2) AS max_group_size
+            COALESCE(
+              (SELECT ps.name FROM project_sections ps WHERE ps.id = g.project_section_id),
+              g.project_section
+            ) AS project_section_name,
+            COALESCE(
+              (SELECT ps.description FROM project_sections ps WHERE ps.id = g.project_section_id),
+              ''
+            ) AS project_section_description,
+            COALESCE(
+              (SELECT ps.max_group_size FROM project_sections ps WHERE ps.id = g.project_section_id),
+              $2
+            ) AS max_group_size
      FROM groups g
-     LEFT JOIN project_sections ps ON ps.id = g.project_section_id
      WHERE g.id = $1
      FOR UPDATE`,
     [groupId, defaultSectionMaxGroupSize],
