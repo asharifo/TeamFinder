@@ -454,16 +454,47 @@ app.get("/", async (request) => {
   const limit = clampLimit(request.query.limit, 50, 200);
 
   const q = `%${qText}%`;
+  const normalizedQText = qText.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const normalizedQ = `%${normalizedQText}%`;
+  const tokens = qText
+    .toLowerCase()
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z0-9]+/g, ""))
+    .filter(Boolean);
   const term = `%${termText}%`;
 
   const result = await pool.query(
     `SELECT id, title, term, description
      FROM classes
-     WHERE ($1 = '' OR id ILIKE $2 OR title ILIKE $2 OR description ILIKE $2)
-       AND ($3 = '' OR term ILIKE $4)
-     ORDER BY id
-     LIMIT $5`,
-    [qText, q, termText, term, limit],
+     WHERE (
+            $1 = ''
+            OR id ILIKE $2
+            OR title ILIKE $2
+            OR description ILIKE $2
+            OR regexp_replace(lower(id), '[^a-z0-9]+', '', 'g') LIKE $3
+            OR regexp_replace(lower(title), '[^a-z0-9]+', '', 'g') LIKE $3
+            OR regexp_replace(lower(description), '[^a-z0-9]+', '', 'g') LIKE $3
+            OR (
+              cardinality($4::text[]) > 0
+              AND NOT EXISTS (
+                SELECT 1
+                FROM unnest($4::text[]) AS token
+                WHERE lower(concat_ws(' ', id, title, description)) NOT LIKE '%' || token || '%'
+              )
+            )
+          )
+       AND ($5 = '' OR term ILIKE $6)
+     ORDER BY
+       CASE
+         WHEN lower(id) = lower($1) THEN 0
+         WHEN regexp_replace(lower(id), '[^a-z0-9]+', '', 'g') = $7 THEN 1
+         WHEN id ILIKE $2 THEN 2
+         WHEN title ILIKE $2 THEN 3
+         ELSE 4
+       END,
+       id
+     LIMIT $8`,
+    [qText, q, normalizedQ, tokens, termText, term, normalizedQText, limit],
   );
 
   return { classes: result.rows };
