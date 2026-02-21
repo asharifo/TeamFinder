@@ -272,44 +272,6 @@ async function isEnrolled(classId, userId, client = pool) {
   return result.rowCount > 0;
 }
 
-async function loadProjectSectionById(sectionId, classId, client = pool) {
-  if (!looksLikeUuid(sectionId)) {
-    return null;
-  }
-
-  const result = await client.query(
-    `SELECT id, class_id, name, description, max_group_size, created_by_user_id, created_at
-     FROM project_sections
-     WHERE id = $1 AND class_id = $2`,
-    [sectionId, classId],
-  );
-  return result.rowCount > 0 ? result.rows[0] : null;
-}
-
-async function loadOrCreateProjectSectionByName(classId, name, createdByUserId, client = pool) {
-  const existing = await client.query(
-    `SELECT id, class_id, name, description, max_group_size, created_by_user_id, created_at
-     FROM project_sections
-     WHERE class_id = $1 AND name = $2`,
-    [classId, name],
-  );
-
-  if (existing.rowCount > 0) {
-    return existing.rows[0];
-  }
-
-  const inserted = await client.query(
-    `INSERT INTO project_sections (class_id, name, description, max_group_size, created_by_user_id)
-     VALUES ($1, $2, '', $3, $4)
-     ON CONFLICT (class_id, name)
-     DO UPDATE SET name = EXCLUDED.name
-     RETURNING id, class_id, name, description, max_group_size, created_by_user_id, created_at`,
-    [classId, name, defaultSectionMaxGroupSize, createdByUserId],
-  );
-
-  return inserted.rows[0];
-}
-
 async function loadGroup(groupId, client = pool) {
   if (!looksLikeUuid(groupId)) {
     return null;
@@ -407,42 +369,6 @@ async function isGroupMember(groupId, userId, client = pool) {
     [groupId, userId],
   );
   return result.rowCount > 0;
-}
-
-async function userHasGroupInSection(classId, userId, projectSectionId, projectSectionName, client = pool, excludedGroupId = null) {
-  const result = await client.query(
-    `SELECT g.id
-     FROM groups g
-     JOIN group_members gm ON gm.group_id = g.id
-     WHERE g.class_id = $1
-       AND gm.user_id = $2
-       AND (
-         ($3::uuid IS NOT NULL AND g.project_section_id = $3::uuid)
-         OR ($3::uuid IS NULL AND g.project_section = $4)
-       )
-       AND ($5::uuid IS NULL OR g.id <> $5::uuid)
-     LIMIT 1`,
-    [classId, userId, projectSectionId || null, projectSectionName || null, excludedGroupId || null],
-  );
-
-  return result.rowCount > 0;
-}
-
-async function lockUserSectionMembership({
-  classId,
-  userId,
-  projectSectionId,
-  projectSectionName,
-  client,
-}) {
-  const normalizedClassId = normalizeClassId(classId);
-  const normalizedUserId = normalizeText(userId);
-  const sectionKey = normalizeText(projectSectionId || projectSectionName);
-
-  await client.query(
-    `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
-    [`${normalizedClassId}:${normalizedUserId}`, sectionKey],
-  );
 }
 
 app.get("/health", async () => {
@@ -659,77 +585,19 @@ app.get("/groups/me", async (request, reply) => {
 
 app.get("/:classId/project-sections", async (request, reply) => {
   const classId = normalizeClassId(request.params.classId);
-
   const classResult = await loadClass(classId);
   if (!classResult) {
     return reply.code(404).send({ error: "class not found" });
   }
 
-  const sections = await pool.query(
-    `SELECT ps.id,
-            ps.class_id,
-            ps.name,
-            ps.description,
-            ps.max_group_size,
-            ps.created_by_user_id,
-            ps.created_at,
-            COUNT(g.id)::int AS group_count
-     FROM project_sections ps
-     LEFT JOIN groups g ON g.project_section_id = ps.id
-     WHERE ps.class_id = $1
-     GROUP BY ps.id
-     ORDER BY ps.created_at ASC`,
-    [classId],
-  );
-
   return {
     class: classResult,
-    sections: sections.rows.map(formatSection),
+    sections: [],
   };
 });
 
 app.post("/:classId/project-sections", async (request, reply) => {
-  const requesterId = requireRequesterUserId(request, reply);
-  if (!requesterId) {
-    return;
-  }
-
-  const classId = normalizeClassId(request.params.classId);
-  const name = normalizeText((request.body || {}).name);
-  const description = normalizeText((request.body || {}).description);
-  const maxGroupSize = toMaxGroupSize((request.body || {}).maxGroupSize, defaultSectionMaxGroupSize);
-
-  if (!name) {
-    return reply.code(400).send({ error: "name is required" });
-  }
-
-  const classResult = await loadClass(classId);
-  if (!classResult) {
-    return reply.code(404).send({ error: "class not found" });
-  }
-
-  const enrolled = await isEnrolled(classId, requesterId);
-  if (!enrolled) {
-    return reply.code(403).send({ error: "you must be enrolled in the class to manage project sections" });
-  }
-
-  const section = await pool.query(
-    `INSERT INTO project_sections (class_id, name, description, max_group_size, created_by_user_id)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (class_id, name)
-     DO UPDATE SET description = EXCLUDED.description,
-                   max_group_size = EXCLUDED.max_group_size
-     RETURNING id,
-               class_id,
-               name,
-               description,
-               max_group_size,
-               created_by_user_id,
-               created_at`,
-    [classId, name, description, maxGroupSize, requesterId],
-  );
-
-  return reply.code(201).send({ section: formatSection(section.rows[0]) });
+  return reply.code(410).send({ error: "project sections are no longer supported" });
 });
 
 app.get("/:classId/members", async (request, reply) => {
@@ -839,25 +707,15 @@ app.post("/:classId/groups", async (request, reply) => {
 
   const classId = normalizeClassId(request.params.classId);
   const name = normalizeText((request.body || {}).name);
-  const rawProjectSection = normalizeText((request.body || {}).projectSection);
-  const rawProjectSectionId = normalizeText((request.body || {}).projectSectionId);
+  const defaultGroupSectionName = "General";
 
   if (!name) {
     return reply.code(400).send({ error: "name is required" });
   }
 
-  if (!rawProjectSection && !rawProjectSectionId) {
-    return reply.code(400).send({ error: "projectSectionId or projectSection is required" });
-  }
-
-  if (rawProjectSectionId && !looksLikeUuid(rawProjectSectionId)) {
-    return reply.code(400).send({ error: "projectSectionId must be a valid UUID" });
-  }
-
   const client = await pool.connect();
 
   let createdGroup = null;
-  let section = null;
 
   try {
     await client.query("BEGIN");
@@ -874,43 +732,23 @@ app.post("/:classId/groups", async (request, reply) => {
       return reply.code(403).send({ error: "you must be enrolled in the class to create a group" });
     }
 
-    if (rawProjectSectionId) {
-      section = await loadProjectSectionById(rawProjectSectionId, classId, client);
-      if (!section) {
-        await client.query("ROLLBACK");
-        return reply.code(404).send({ error: "project section not found for class" });
-      }
-    } else {
-      section = await loadOrCreateProjectSectionByName(classId, rawProjectSection, ownerUserId, client);
-    }
-
-    await lockUserSectionMembership({
-      classId,
-      userId: ownerUserId,
-      projectSectionId: section.id,
-      projectSectionName: section.name,
-      client,
-    });
-
-    const alreadyInSectionGroup = await userHasGroupInSection(
-      classId,
-      ownerUserId,
-      section.id,
-      section.name,
-      client,
-      null,
+    const ownedGroupsResult = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM groups
+       WHERE class_id = $1 AND owner_user_id = $2`,
+      [classId, ownerUserId],
     );
-
-    if (alreadyInSectionGroup) {
+    const ownedGroupsCount = Number(ownedGroupsResult.rows[0]?.count || 0);
+    if (ownedGroupsCount >= 5) {
       await client.query("ROLLBACK");
-      return reply.code(409).send({ error: "you are already in a group for this project section" });
+      return reply.code(409).send({ error: "you can create up to 5 groups per class" });
     }
 
     const groupResult = await client.query(
       `INSERT INTO groups (class_id, name, project_section, project_section_id, owner_user_id)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, class_id, name, project_section, project_section_id, owner_user_id, created_at`,
-      [classId, name, section.name, section.id, ownerUserId],
+      [classId, name, defaultGroupSectionName, null, ownerUserId],
     );
 
     createdGroup = groupResult.rows[0];
@@ -937,8 +775,8 @@ app.post("/:classId/groups", async (request, reply) => {
     groupId: createdGroup.id,
     classId,
     ownerUserId,
-    projectSectionId: section.id,
-    projectSection: section.name,
+    projectSectionId: null,
+    projectSection: defaultGroupSectionName,
   });
 
   return reply.code(201).send({ group: formatGroup(group) });
@@ -965,17 +803,6 @@ app.post("/groups/:groupId/requests", async (request, reply) => {
   const alreadyMember = await isGroupMember(groupId, userId);
   if (alreadyMember) {
     return reply.code(409).send({ error: "you are already a member of this group" });
-  }
-
-  const alreadyInSectionGroup = await userHasGroupInSection(
-    group.class_id,
-    userId,
-    group.project_section_id,
-    group.project_section_name,
-  );
-
-  if (alreadyInSectionGroup) {
-    return reply.code(409).send({ error: "you are already in a group for this project section" });
   }
 
   const memberCount = await countGroupMembers(groupId);
@@ -1060,28 +887,6 @@ app.post("/groups/:groupId/requests/:userId/approve", async (request, reply) => 
     if (!targetEnrolled) {
       await client.query("ROLLBACK");
       return reply.code(409).send({ error: "user is not enrolled in the class" });
-    }
-
-    await lockUserSectionMembership({
-      classId: group.class_id,
-      userId,
-      projectSectionId: group.project_section_id,
-      projectSectionName: group.project_section_name,
-      client,
-    });
-
-    const targetAlreadyInSection = await userHasGroupInSection(
-      group.class_id,
-      userId,
-      group.project_section_id,
-      group.project_section_name,
-      client,
-      group.id,
-    );
-
-    if (targetAlreadyInSection) {
-      await client.query("ROLLBACK");
-      return reply.code(409).send({ error: "user already belongs to a group in this project section" });
     }
 
     const memberCount = await countGroupMembers(groupId, client);

@@ -101,10 +101,6 @@ export default function AppShell({ children }) {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-chip">
-            <span className="label">Workspace</span>
-            <strong>TeamFinder</strong>
-          </div>
           <button className="btn btn-secondary" onClick={logout} type="button">
             Logout
           </button>

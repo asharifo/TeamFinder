@@ -1,20 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 const TAB_ITEMS = [
-  { id: "find", label: "Find Group" },
-  { id: "my-group", label: "My Group" },
-  { id: "requests", label: "Requests" },
-  { id: "sections", label: "Section Settings" },
+  { id: "find", label: "Find Groups" },
+  { id: "my-groups", label: "My Groups" },
   { id: "students", label: "Students" },
+  { id: "create-group", label: "Create Group" },
 ];
 
 const PAGE_SIZE = {
   availableGroups: 6,
   myGroups: 5,
   requests: 8,
-  sections: 6,
   students: 12,
 };
 
@@ -24,10 +22,6 @@ function normalizeMembers(value) {
 
 function normalizeRequests(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function getGroupSectionId(group) {
-  return String(group.project_section_id || group.projectSectionId || "").trim();
 }
 
 function paginateItems(items, page, pageSize) {
@@ -88,21 +82,14 @@ export default function ClassDetailPage() {
   const { apiFetch, session } = useAuth();
 
   const [activeTab, setActiveTab] = useState("find");
-  const [selectedSectionId, setSelectedSectionId] = useState("all");
   const [classMeta, setClassMeta] = useState(null);
   const [members, setMembers] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [sections, setSections] = useState([]);
   const [pendingRequestsByGroup, setPendingRequestsByGroup] = useState({});
   const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupSectionId, setNewGroupSectionId] = useState("");
-  const [newSectionName, setNewSectionName] = useState("");
-  const [newSectionDescription, setNewSectionDescription] = useState("");
-  const [newSectionMaxGroupSize, setNewSectionMaxGroupSize] = useState(4);
   const [availableGroupsPage, setAvailableGroupsPage] = useState(1);
   const [myGroupsPage, setMyGroupsPage] = useState(1);
   const [requestPage, setRequestPage] = useState(1);
-  const [sectionsPage, setSectionsPage] = useState(1);
   const [studentsPage, setStudentsPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -117,28 +104,17 @@ export default function ClassDetailPage() {
   );
 
   const myOwnedGroups = useMemo(
-    () => myGroups.filter((group) => group.owner_user_id === myUserId || group.ownerUserId === myUserId),
-    [myGroups, myUserId],
+    () => groups.filter((group) => group.owner_user_id === myUserId || group.ownerUserId === myUserId),
+    [groups, myUserId],
   );
+
+  const myCreatedGroupsCount = useMemo(() => myOwnedGroups.length, [myOwnedGroups]);
+  const reachedCreateLimit = myCreatedGroupsCount >= 5;
 
   const availableGroups = useMemo(
     () => groups.filter((group) => !normalizeMembers(group.members).includes(myUserId)),
     [groups, myUserId],
   );
-
-  const filteredAvailableGroups = useMemo(() => {
-    if (selectedSectionId === "all") {
-      return availableGroups;
-    }
-    return availableGroups.filter((group) => getGroupSectionId(group) === selectedSectionId);
-  }, [availableGroups, selectedSectionId]);
-
-  const filteredMyGroups = useMemo(() => {
-    if (selectedSectionId === "all") {
-      return myGroups;
-    }
-    return myGroups.filter((group) => getGroupSectionId(group) === selectedSectionId);
-  }, [myGroups, selectedSectionId]);
 
   const reviewRequests = useMemo(() => {
     const rows = [];
@@ -150,8 +126,6 @@ export default function ClassDetailPage() {
           ...requestItem,
           groupId: group.id,
           groupName: group.name,
-          sectionName: group.project_section_name || group.project_section,
-          sectionId: getGroupSectionId(group),
         });
       }
     }
@@ -165,43 +139,19 @@ export default function ClassDetailPage() {
     return rows;
   }, [myOwnedGroups, pendingRequestsByGroup]);
 
-  const filteredReviewRequests = useMemo(() => {
-    if (selectedSectionId === "all") {
-      return reviewRequests;
-    }
-    return reviewRequests.filter((item) => item.sectionId === selectedSectionId);
-  }, [reviewRequests, selectedSectionId]);
-
-  const filteredSections = useMemo(() => {
-    if (selectedSectionId === "all") {
-      return sections;
-    }
-    return sections.filter((section) => section.id === selectedSectionId);
-  }, [sections, selectedSectionId]);
-
-  const selectedSectionMeta = useMemo(
-    () => sections.find((section) => section.id === selectedSectionId) || null,
-    [sections, selectedSectionId],
-  );
-
   const availableGroupsPagination = useMemo(
-    () => paginateItems(filteredAvailableGroups, availableGroupsPage, PAGE_SIZE.availableGroups),
-    [filteredAvailableGroups, availableGroupsPage],
+    () => paginateItems(availableGroups, availableGroupsPage, PAGE_SIZE.availableGroups),
+    [availableGroups, availableGroupsPage],
   );
 
   const myGroupsPagination = useMemo(
-    () => paginateItems(filteredMyGroups, myGroupsPage, PAGE_SIZE.myGroups),
-    [filteredMyGroups, myGroupsPage],
+    () => paginateItems(myGroups, myGroupsPage, PAGE_SIZE.myGroups),
+    [myGroups, myGroupsPage],
   );
 
   const requestsPagination = useMemo(
-    () => paginateItems(filteredReviewRequests, requestPage, PAGE_SIZE.requests),
-    [filteredReviewRequests, requestPage],
-  );
-
-  const sectionsPagination = useMemo(
-    () => paginateItems(filteredSections, sectionsPage, PAGE_SIZE.sections),
-    [filteredSections, sectionsPage],
+    () => paginateItems(reviewRequests, requestPage, PAGE_SIZE.requests),
+    [reviewRequests, requestPage],
   );
 
   const studentsPagination = useMemo(
@@ -241,34 +191,15 @@ export default function ClassDetailPage() {
     setError("");
 
     try {
-      const [membersPayload, groupsPayload, sectionsPayload] = await Promise.all([
+      const [membersPayload, groupsPayload] = await Promise.all([
         apiFetch(`/api/classes/${encodeURIComponent(classId)}/members`),
         apiFetch(`/api/classes/${encodeURIComponent(classId)}/groups`),
-        apiFetch(`/api/classes/${encodeURIComponent(classId)}/project-sections`),
       ]);
 
       const nextGroups = groupsPayload.groups || [];
-      const nextSections = sectionsPayload.sections || [];
-
       setClassMeta(membersPayload.class || { id: classId, title: classId, term: "" });
       setMembers(membersPayload.members || []);
       setGroups(nextGroups);
-      setSections(nextSections);
-
-      setNewGroupSectionId((currentValue) => {
-        if (currentValue && nextSections.some((section) => section.id === currentValue)) {
-          return currentValue;
-        }
-        return nextSections.length > 0 ? nextSections[0].id : "";
-      });
-
-      setSelectedSectionId((currentValue) => {
-        if (currentValue === "all") {
-          return currentValue;
-        }
-        return nextSections.some((section) => section.id === currentValue) ? currentValue : "all";
-      });
-
       await loadOwnerRequests(nextGroups);
     } catch (fetchError) {
       setError(fetchError.message || "Failed to load class details");
@@ -281,55 +212,14 @@ export default function ClassDetailPage() {
     loadClassData();
   }, [loadClassData]);
 
-  useEffect(() => {
-    setAvailableGroupsPage(1);
-    setMyGroupsPage(1);
-    setRequestPage(1);
-    setSectionsPage(1);
-    setStudentsPage(1);
-  }, [selectedSectionId]);
-
-  const createSection = useCallback(
-    async (event) => {
-      event.preventDefault();
-      setIsSubmitting(true);
-      setError("");
-      setInfo("");
-
-      try {
-        const payload = await apiFetch(`/api/classes/${encodeURIComponent(classId)}/project-sections`, {
-          method: "POST",
-          body: JSON.stringify({
-            name: newSectionName,
-            description: newSectionDescription,
-            maxGroupSize: Number(newSectionMaxGroupSize || 4),
-          }),
-        });
-
-        setInfo(`Project section ${payload.section.name} saved`);
-        setNewSectionName("");
-        setNewSectionDescription("");
-        setNewSectionMaxGroupSize(4);
-        await loadClassData();
-      } catch (sectionError) {
-        setError(sectionError.message || "Failed to save project section");
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [
-      apiFetch,
-      classId,
-      loadClassData,
-      newSectionDescription,
-      newSectionMaxGroupSize,
-      newSectionName,
-    ],
-  );
-
   const createGroup = useCallback(
     async (event) => {
       event.preventDefault();
+      if (reachedCreateLimit) {
+        setError("You can create up to 5 groups in this class.");
+        return;
+      }
+
       setIsSubmitting(true);
       setError("");
       setInfo("");
@@ -339,12 +229,12 @@ export default function ClassDetailPage() {
           method: "POST",
           body: JSON.stringify({
             name: newGroupName,
-            projectSectionId: newGroupSectionId,
           }),
         });
 
         setInfo(`Created group ${payload.group.name}`);
         setNewGroupName("");
+        setActiveTab("my-groups");
         await loadClassData();
       } catch (createError) {
         setError(createError.message || "Failed to create group");
@@ -352,7 +242,7 @@ export default function ClassDetailPage() {
         setIsSubmitting(false);
       }
     },
-    [apiFetch, classId, loadClassData, newGroupName, newGroupSectionId],
+    [apiFetch, classId, loadClassData, newGroupName, reachedCreateLimit],
   );
 
   const requestJoin = useCallback(
@@ -468,78 +358,16 @@ export default function ClassDetailPage() {
     [apiFetch, navigate],
   );
 
-  const startDirectMessage = useCallback(
-    async (targetUserId) => {
-      setError("");
-      if (!targetUserId || targetUserId === myUserId) {
-        return;
-      }
-
-      try {
-        const payload = await apiFetch("/api/messages/conversations/dm", {
-          method: "POST",
-          body: JSON.stringify({ otherUserId: targetUserId }),
-        });
-
-        navigate(`/chats?conversation=${encodeURIComponent(payload.conversation.id)}`);
-      } catch (dmError) {
-        setError(dmError.message || "Unable to start direct message");
-      }
-    },
-    [apiFetch, myUserId, navigate],
-  );
-
-  const primaryAction = useMemo(() => {
-    if (activeTab === "find") {
-      return {
-        label: "Create Group",
-        onClick: () => setActiveTab("my-group"),
-      };
-    }
-
-    if (activeTab === "my-group") {
-      return {
-        label: "Find Groups",
-        onClick: () => setActiveTab("find"),
-      };
-    }
-
-    return {
-      label: "Find Groups",
-      onClick: () => setActiveTab("find"),
-    };
-  }, [activeTab]);
-
-  const contextHint = useMemo(() => {
-    if (activeTab === "find") {
-      return "Browse open groups and send one join request at a time.";
-    }
-    if (activeTab === "my-group") {
-      return "Manage your current group and use chat for team coordination.";
-    }
-    if (activeTab === "requests") {
-      return "Approve or reject pending join requests for groups you own.";
-    }
-    if (activeTab === "sections") {
-      return "Define project sections and expected group sizes.";
-    }
-    return "Message classmates directly to coordinate outside group workflows.";
-  }, [activeTab]);
-
   function renderFindGroupTab() {
     return (
       <div className="class-flow-stack">
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>Available Groups</h3>
-            <span className="muted">{filteredAvailableGroups.length} groups</span>
+            <span className="muted">{availableGroups.length} groups</span>
           </div>
 
-          {filteredAvailableGroups.length === 0 ? (
-            <p className="muted">
-              {selectedSectionId === "all" ? "No available groups yet." : "No available groups found in this section."}
-            </p>
-          ) : null}
+          {availableGroups.length === 0 ? <p className="muted">No available groups yet.</p> : null}
 
           <div className="stacked-list">
             {availableGroupsPagination.items.map((group) => {
@@ -548,7 +376,6 @@ export default function ClassDetailPage() {
                 <article className="result-item" key={group.id}>
                   <div>
                     <h4>{group.name}</h4>
-                    <p>Section: {group.project_section_name || group.project_section}</p>
                     <small>
                       Members: {group.member_count}/{group.max_group_size}
                     </small>
@@ -567,16 +394,16 @@ export default function ClassDetailPage() {
     );
   }
 
-  function renderMyGroupTab() {
+  function renderMyGroupsTab() {
     return (
       <div className="class-flow-stack">
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>My Groups</h3>
-            <span className="muted">{filteredMyGroups.length} groups</span>
+            <span className="muted">{myGroups.length} groups</span>
           </div>
 
-          {filteredMyGroups.length === 0 ? <p className="muted">You are not in a group for this section yet.</p> : null}
+          {myGroups.length === 0 ? <p className="muted">You are not in any groups yet.</p> : null}
 
           <div className="stacked-list">
             {myGroupsPagination.items.map((group) => {
@@ -585,7 +412,6 @@ export default function ClassDetailPage() {
                 <article className="result-item" key={group.id}>
                   <div>
                     <h4>{group.name}</h4>
-                    <p>Section: {group.project_section_name || group.project_section}</p>
                     <small>
                       Members: {group.member_count}/{group.max_group_size}
                       {isOwner ? " | Owner" : ""}
@@ -614,49 +440,13 @@ export default function ClassDetailPage() {
         </section>
 
         <section className="class-flow-block">
-          <h3>Create Group</h3>
-          <form className="form-grid" onSubmit={createGroup}>
-            <label>
-              Group name
-              <input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} required />
-            </label>
-            <label>
-              Project section
-              <select
-                value={newGroupSectionId}
-                onChange={(event) => setNewGroupSectionId(event.target.value)}
-                required
-                disabled={sections.length === 0}
-              >
-                {sections.map((section) => (
-                  <option key={section.id} value={section.id}>
-                    {section.name} (max {section.max_group_size})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn btn-primary" type="submit" disabled={isSubmitting || sections.length === 0}>
-              Create Group
-            </button>
-          </form>
-        </section>
-      </div>
-    );
-  }
-
-  function renderRequestsTab() {
-    return (
-      <div className="class-flow-stack">
-        <section className="class-flow-block">
           <div className="section-heading">
             <h3>Pending Join Requests</h3>
-            <span className="muted">{filteredReviewRequests.length} pending</span>
+            <span className="muted">{reviewRequests.length} pending</span>
           </div>
 
           {myOwnedGroups.length === 0 ? <p className="muted">You do not own any groups in this class.</p> : null}
-          {myOwnedGroups.length > 0 && filteredReviewRequests.length === 0 ? (
-            <p className="muted">No pending requests in this section.</p>
-          ) : null}
+          {myOwnedGroups.length > 0 && reviewRequests.length === 0 ? <p className="muted">No pending requests.</p> : null}
 
           <div className="stacked-list">
             {requestsPagination.items.map((requestItem) => (
@@ -664,9 +454,7 @@ export default function ClassDetailPage() {
                 <div>
                   <h4>{requestItem.user_id}</h4>
                   <p>Group: {requestItem.groupName}</p>
-                  <small>
-                    Section: {requestItem.sectionName || "Unassigned"} | Requested {formatDateTime(requestItem.created_at)}
-                  </small>
+                  <small>Requested {formatDateTime(requestItem.created_at)}</small>
                 </div>
                 <div className="inline-actions">
                   <button
@@ -694,62 +482,24 @@ export default function ClassDetailPage() {
     );
   }
 
-  function renderSectionsTab() {
+  function renderCreateGroupTab() {
     return (
       <div className="class-flow-stack">
         <section className="class-flow-block">
           <div className="section-heading">
-            <h3>Project Sections</h3>
-            <span className="muted">{filteredSections.length} sections</span>
+            <h3>Create Group</h3>
+            <span className="muted">
+              Created {myCreatedGroupsCount}/5
+            </span>
           </div>
-
-          {filteredSections.length === 0 ? <p className="muted">No project sections yet.</p> : null}
-
-          <div className="stacked-list">
-            {sectionsPagination.items.map((section) => (
-              <article className="result-item" key={section.id}>
-                <div>
-                  <h4>{section.name}</h4>
-                  <p>{section.description || "No description"}</p>
-                  <small>
-                    Max group size: {section.max_group_size} | Groups: {section.group_count}
-                  </small>
-                </div>
-              </article>
-            ))}
-          </div>
-
-          <PaginationControls pagination={sectionsPagination} onPageChange={setSectionsPage} />
-        </section>
-
-        <section className="class-flow-block">
-          <h3>Create / Update Project Section</h3>
-          <form className="form-grid" onSubmit={createSection}>
+          <p className="muted">Each student can create up to 5 groups in this class.</p>
+          <form className="form-grid" onSubmit={createGroup}>
             <label>
-              Name
-              <input value={newSectionName} onChange={(event) => setNewSectionName(event.target.value)} required />
+              Group name
+              <input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} required />
             </label>
-            <label>
-              Description
-              <input
-                value={newSectionDescription}
-                onChange={(event) => setNewSectionDescription(event.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <label>
-              Max group size
-              <input
-                type="number"
-                min={2}
-                max={20}
-                value={newSectionMaxGroupSize}
-                onChange={(event) => setNewSectionMaxGroupSize(event.target.value)}
-                required
-              />
-            </label>
-            <button className="btn btn-primary" type="submit" disabled={isSubmitting}>
-              Save Section
+            <button className="btn btn-primary" type="submit" disabled={isSubmitting || reachedCreateLimit}>
+              {reachedCreateLimit ? "Limit Reached" : "Create Group"}
             </button>
           </form>
         </section>
@@ -777,11 +527,6 @@ export default function ClassDetailPage() {
                     <span>{userId}</span>
                     <small>{formatDateTime(member.created_at)}</small>
                   </div>
-                  {userId !== myUserId ? (
-                    <button className="btn btn-secondary" type="button" onClick={() => startDirectMessage(userId)}>
-                      Message
-                    </button>
-                  ) : null}
                 </li>
               );
             })}
@@ -794,20 +539,16 @@ export default function ClassDetailPage() {
   }
 
   function renderMainTab() {
-    if (activeTab === "my-group") {
-      return renderMyGroupTab();
-    }
-
-    if (activeTab === "requests") {
-      return renderRequestsTab();
-    }
-
-    if (activeTab === "sections") {
-      return renderSectionsTab();
+    if (activeTab === "my-groups") {
+      return renderMyGroupsTab();
     }
 
     if (activeTab === "students") {
       return renderStudentsTab();
+    }
+
+    if (activeTab === "create-group") {
+      return renderCreateGroupTab();
     }
 
     return renderFindGroupTab();
@@ -823,25 +564,6 @@ export default function ClassDetailPage() {
               {classMeta?.title ? ` - ${classMeta.title}` : ""}
             </h2>
             <p className="muted">Term: {classMeta?.term || "N/A"}</p>
-          </div>
-          <div className="class-hub-header-actions">
-            <label className="class-filter-control">
-              Section
-              <select value={selectedSectionId} onChange={(event) => setSelectedSectionId(event.target.value)}>
-                <option value="all">All sections</option>
-                {sections.map((section) => (
-                  <option key={section.id} value={section.id}>
-                    {section.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn btn-primary" type="button" onClick={primaryAction.onClick}>
-              {primaryAction.label}
-            </button>
-            <Link className="btn btn-ghost" to="/">
-              Back to classes
-            </Link>
           </div>
         </div>
 
@@ -863,53 +585,7 @@ export default function ClassDetailPage() {
         {info ? <p className="notice success">{info}</p> : null}
       </section>
 
-      <div className="class-hub-grid">
-        <section className="card class-hub-main">{renderMainTab()}</section>
-
-        <aside className="card class-hub-context">
-          <h3>Class Overview</h3>
-          <p className="muted">{contextHint}</p>
-
-          <div className="class-context-stats">
-            <article className="class-context-stat">
-              <span className="muted">Project Sections</span>
-              <strong>{sections.length}</strong>
-            </article>
-            <article className="class-context-stat">
-              <span className="muted">Groups</span>
-              <strong>{groups.length}</strong>
-            </article>
-            <article className="class-context-stat">
-              <span className="muted">Open Groups</span>
-              <strong>{filteredAvailableGroups.length}</strong>
-            </article>
-            <article className="class-context-stat">
-              <span className="muted">My Groups</span>
-              <strong>{filteredMyGroups.length}</strong>
-            </article>
-            <article className="class-context-stat">
-              <span className="muted">Pending Requests</span>
-              <strong>{filteredReviewRequests.length}</strong>
-            </article>
-            <article className="class-context-stat">
-              <span className="muted">Students</span>
-              <strong>{members.length}</strong>
-            </article>
-          </div>
-
-          {selectedSectionMeta ? (
-            <div className="class-context-section-meta">
-              <h4>{selectedSectionMeta.name}</h4>
-              <p>{selectedSectionMeta.description || "No description"}</p>
-              <small>
-                Max group size: {selectedSectionMeta.max_group_size} | Groups: {selectedSectionMeta.group_count}
-              </small>
-            </div>
-          ) : (
-            <p className="muted">Select a section filter for focused workflows.</p>
-          )}
-        </aside>
-      </div>
+      <section className="card class-hub-main">{renderMainTab()}</section>
     </div>
   );
 }

@@ -736,7 +736,7 @@ small {
 
 .class-hub-title-row {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
   gap: 14px;
   flex-wrap: wrap;
@@ -750,27 +750,6 @@ small {
 
 .class-hub-title-row p {
   margin: 6px 0 0;
-}
-
-.class-hub-header-actions {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-
-.class-filter-control {
-  margin: 0;
-  min-width: 220px;
-  gap: 6px;
-  color: var(--soft);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.class-filter-control select {
-  min-width: 100%;
 }
 
 .class-tab-nav {
@@ -808,13 +787,6 @@ small {
   margin-top: 10px;
 }
 
-.class-hub-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 14px;
-  align-items: start;
-}
-
 .class-hub-main {
   min-height: 56vh;
 }
@@ -844,48 +816,6 @@ small {
   margin-top: 0;
 }
 
-.class-hub-context {
-  display: grid;
-  gap: 12px;
-  align-content: start;
-}
-
-.class-hub-context h3,
-.class-hub-context h4 {
-  margin: 0;
-}
-
-.class-context-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.class-context-stat {
-  border: 1px solid rgba(80, 99, 133, 0.45);
-  border-radius: 12px;
-  background: rgba(18, 25, 40, 0.82);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.class-context-stat strong {
-  font-size: 1.1rem;
-}
-
-.class-context-section-meta {
-  border: 1px solid rgba(76, 95, 130, 0.45);
-  border-radius: 12px;
-  background: rgba(20, 28, 43, 0.86);
-  padding: 10px;
-}
-
-.class-context-section-meta p {
-  margin: 6px 0 3px;
-}
-
 .pagination-row {
   margin-top: 12px;
   display: flex;
@@ -909,10 +839,6 @@ small {
 
   .dashboard-pane {
     padding: 28px;
-  }
-
-  .class-hub-grid {
-    grid-template-columns: minmax(0, 1fr) 290px;
   }
 }
 
@@ -975,15 +901,6 @@ small {
 
   .class-hub-title-row {
     flex-direction: column;
-  }
-
-  .class-hub-header-actions {
-    width: 100%;
-    align-items: stretch;
-  }
-
-  .class-hub-grid {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -1069,10 +986,6 @@ small {
     font-size: 1.45rem;
   }
 
-  .class-filter-control {
-    min-width: 100%;
-  }
-
   .class-tab-nav {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -1081,10 +994,6 @@ small {
 
   .class-tab-btn {
     white-space: nowrap;
-  }
-
-  .class-context-stats {
-    grid-template-columns: 1fr;
   }
 
   .pagination-row {

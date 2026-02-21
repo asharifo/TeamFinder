@@ -39,7 +39,6 @@ export default function ChatsPage() {
   const [presenceUsers, setPresenceUsers] = useState([]);
   const [typingUsersByConversation, setTypingUsersByConversation] = useState({});
   const [draftMessage, setDraftMessage] = useState("");
-  const [newConversationOtherUserId, setNewConversationOtherUserId] = useState("");
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -303,35 +302,6 @@ export default function ChatsPage() {
     syncRealtimeRoom();
   }, [selectedConversationId, emitWithAck, isRealtimeConnected]);
 
-  const handleCreateConversation = useCallback(
-    async (event) => {
-      event.preventDefault();
-      setError("");
-
-      const otherUserId = newConversationOtherUserId.trim();
-      if (!otherUserId) {
-        setError("Other user ID is required");
-        return;
-      }
-
-      try {
-        const payload = await apiFetch("/api/messages/conversations/dm", {
-          method: "POST",
-          body: JSON.stringify({
-            otherUserId,
-          }),
-        });
-
-        setNewConversationOtherUserId("");
-        await loadConversations();
-        setSelectedConversationId(payload.conversation.id);
-      } catch (createError) {
-        setError(createError.message || "Failed to create conversation");
-      }
-    },
-    [apiFetch, newConversationOtherUserId, loadConversations],
-  );
-
   const sendMessageHttp = useCallback(
     async (conversationId, body) => {
       const payload = await apiFetch(`/api/messages/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -434,22 +404,6 @@ export default function ChatsPage() {
             </button>
           ))}
         </div>
-
-        <form className="form-grid" onSubmit={handleCreateConversation}>
-          <h3>Start Direct Message</h3>
-          <label>
-            Other user ID
-            <input
-              value={newConversationOtherUserId}
-              onChange={(event) => setNewConversationOtherUserId(event.target.value)}
-              placeholder="auth0|..."
-              required
-            />
-          </label>
-          <button className="btn btn-primary" type="submit">
-            Open DM
-          </button>
-        </form>
       </section>
 
       <section className="card chat-thread-card">
