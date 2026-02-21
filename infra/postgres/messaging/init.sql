@@ -4,7 +4,9 @@ CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   type TEXT NOT NULL CHECK (type IN ('DM', 'CLASS', 'GROUP')),
   class_id TEXT,
+  class_name TEXT NOT NULL DEFAULT '',
   group_id UUID,
+  group_name TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

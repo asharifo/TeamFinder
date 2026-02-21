@@ -94,6 +94,15 @@ async function publish(topic, payload) {
   }
 }
 
+async function publishIdentityUpserted({ userId, email, name, sessionId }) {
+  await publish("user.identity.upserted", {
+    userId,
+    email: email || "",
+    name: name || "",
+    sessionId: sessionId || "",
+  });
+}
+
 function ensureAuth0Configured(reply) {
   if (!auth0Configured) {
     reply.code(503).send({ error: "Auth0 is not configured" });
@@ -261,6 +270,12 @@ app.post("/exchange-code", async (request, reply) => {
       name: identity.name,
       sessionId: session.id,
     });
+    await publishIdentityUpserted({
+      userId: identity.sub,
+      email: identity.email,
+      name: identity.name,
+      sessionId: session.id,
+    });
 
     return reply.send({
       session: {
@@ -326,6 +341,13 @@ app.post("/refresh", async (request, reply) => {
     if (!tokens.refresh_token) {
       await touchSession(session.id);
     }
+
+    await publishIdentityUpserted({
+      userId: updatedSession.auth0_sub,
+      email: updatedSession.user_email,
+      name: updatedSession.user_name,
+      sessionId: updatedSession.id,
+    });
 
     return reply.send({
       session: {

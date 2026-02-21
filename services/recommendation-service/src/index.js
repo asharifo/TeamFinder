@@ -13,6 +13,14 @@ const app = fastify({
 const port = Number(process.env.PORT || 3005);
 const broker = process.env.KAFKA_BROKER;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const projectionTopics = [
+  "profile.updated",
+  "user.profile.upserted",
+  "user.identity.upserted",
+  "user.authenticated",
+  "class.enrollment.created",
+  "group.member.added",
+];
 
 let consumerRunning = false;
 
@@ -47,15 +55,62 @@ function normalizeSkills(value) {
   return value.map((item) => String(item).trim().toLowerCase()).filter(Boolean);
 }
 
-async function upsertProfileProjection(userId, skills, about) {
+function normalizeOptionalText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return value;
+}
+
+async function ensureSchema() {
+  await pool.query(`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS user_email TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS profile_picture_url TEXT NOT NULL DEFAULT ''`);
+}
+
+async function upsertIdentityProjection(userId, userName, userEmail) {
   await pool.query(
-    `INSERT INTO user_profiles (user_id, skills, about, updated_at)
+    `INSERT INTO user_profiles (user_id, user_name, user_email, updated_at)
      VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id)
+     DO UPDATE SET user_name = CASE
+                                  WHEN EXCLUDED.user_name <> '' THEN EXCLUDED.user_name
+                                  ELSE user_profiles.user_name
+                                END,
+                   user_email = CASE
+                                   WHEN EXCLUDED.user_email <> '' THEN EXCLUDED.user_email
+                                   ELSE user_profiles.user_email
+                                 END,
+                   updated_at = NOW()`,
+    [userId, typeof userName === "string" ? userName : "", typeof userEmail === "string" ? userEmail : ""],
+  );
+}
+
+async function upsertProfileProjection(userId, skills, about, profilePictureUrl, userName = "", userEmail = "") {
+  await pool.query(
+    `INSERT INTO user_profiles (user_id, skills, about, profile_picture_url, user_name, user_email, updated_at)
+     VALUES ($1, $2, $3, COALESCE($4, ''), $5, $6, NOW())
      ON CONFLICT (user_id)
      DO UPDATE SET skills = EXCLUDED.skills,
                    about = EXCLUDED.about,
+                   profile_picture_url = COALESCE($4, user_profiles.profile_picture_url),
+                   user_name = CASE
+                                 WHEN EXCLUDED.user_name <> '' THEN EXCLUDED.user_name
+                                 ELSE user_profiles.user_name
+                               END,
+                   user_email = CASE
+                                  WHEN EXCLUDED.user_email <> '' THEN EXCLUDED.user_email
+                                  ELSE user_profiles.user_email
+                                END,
                    updated_at = NOW()`,
-    [userId, normalizeSkills(skills), typeof about === "string" ? about : ""],
+    [
+      userId,
+      normalizeSkills(skills),
+      typeof about === "string" ? about : "",
+      normalizeOptionalText(profilePictureUrl),
+      typeof userName === "string" ? userName : "",
+      typeof userEmail === "string" ? userEmail : "",
+    ],
   );
 }
 
@@ -171,8 +226,39 @@ async function handleEvent(topic, payload) {
     if (!payload.userId) {
       return;
     }
-    await upsertProfileProjection(payload.userId, payload.skills, payload.about);
+    await upsertProfileProjection(
+      payload.userId,
+      payload.skills,
+      payload.about,
+      payload.profilePictureUrl || payload.profile_picture_url,
+      payload.userName || payload.name || "",
+      payload.userEmail || payload.email || "",
+    );
     await recomputeForUserAndNeighbors(payload.userId);
+    return;
+  }
+
+  if (topic === "user.profile.upserted") {
+    if (!payload.userId) {
+      return;
+    }
+    await upsertProfileProjection(
+      payload.userId,
+      payload.skills,
+      payload.about,
+      payload.profilePictureUrl || payload.profile_picture_url,
+      payload.userName || payload.name || "",
+      payload.userEmail || payload.email || "",
+    );
+    await recomputeForUserAndNeighbors(payload.userId);
+    return;
+  }
+
+  if (topic === "user.identity.upserted" || topic === "user.authenticated") {
+    if (!payload.userId) {
+      return;
+    }
+    await upsertIdentityProjection(payload.userId, payload.userName || payload.name || "", payload.userEmail || payload.email || "");
     return;
   }
 
@@ -192,6 +278,37 @@ async function handleEvent(topic, payload) {
   }
 }
 
+async function ensureProjectionTopics(kafka) {
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    const metadata = await admin.fetchTopicMetadata();
+    const existingTopics = new Set((metadata.topics || []).map((topic) => topic.name));
+    const missingTopics = projectionTopics.filter((topic) => !existingTopics.has(topic));
+
+    if (missingTopics.length === 0) {
+      return;
+    }
+
+    await admin.createTopics({
+      waitForLeaders: true,
+      topics: missingTopics.map((topic) => ({
+        topic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      })),
+    });
+  } catch (error) {
+    app.log.warn({ error }, "failed to ensure projection topics");
+  } finally {
+    try {
+      await admin.disconnect();
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
 async function startConsumer() {
   if (!broker) {
     app.log.warn("KAFKA_BROKER is not set; recommendation events are disabled");
@@ -202,8 +319,9 @@ async function startConsumer() {
   const consumer = kafka.consumer({ groupId: "recommendation-service-group" });
 
   try {
+    await ensureProjectionTopics(kafka);
     await consumer.connect();
-    for (const topic of ["profile.updated", "class.enrollment.created", "group.member.added"]) {
+    for (const topic of projectionTopics) {
       await consumer.subscribe({ topic });
     }
     consumer
@@ -234,7 +352,7 @@ async function startConsumer() {
         app.log.error({ error }, "kafka consumer crashed");
       });
     consumerRunning = true;
-    app.log.info("recommendation consumer is running");
+    app.log.info({ topics: projectionTopics }, "recommendation consumer is running");
   } catch (error) {
     app.log.error({ error }, "failed to start kafka consumer");
   }
@@ -255,10 +373,17 @@ app.get("/:userId", async (request, reply) => {
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 20;
 
   const result = await pool.query(
-    `SELECT user_id, target_user_id, score, reasons, updated_at
-     FROM recommendations
-     WHERE user_id = $1
-     ORDER BY score DESC, updated_at DESC
+    `SELECT r.user_id,
+            r.target_user_id,
+            r.score,
+            r.reasons,
+            r.updated_at,
+            up.user_name AS target_user_name,
+            up.profile_picture_url AS target_profile_picture_url
+     FROM recommendations r
+     LEFT JOIN user_profiles up ON up.user_id = r.target_user_id
+     WHERE r.user_id = $1
+     ORDER BY r.score DESC, r.updated_at DESC
      LIMIT $2`,
     [userId, limit],
   );
@@ -281,6 +406,7 @@ app.post("/recompute/:userId", async (request, reply) => {
 
 async function start() {
   await app.register(cors, { origin: true });
+  await ensureSchema();
   await app.listen({ port, host: "0.0.0.0" });
   await startConsumer();
 }

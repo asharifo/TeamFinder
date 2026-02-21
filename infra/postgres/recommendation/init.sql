@@ -1,5 +1,8 @@
 CREATE TABLE IF NOT EXISTS user_profiles (
   user_id TEXT PRIMARY KEY,
+  user_name TEXT NOT NULL DEFAULT '',
+  user_email TEXT NOT NULL DEFAULT '',
+  profile_picture_url TEXT NOT NULL DEFAULT '',
   skills TEXT[] NOT NULL DEFAULT '{}',
   about TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

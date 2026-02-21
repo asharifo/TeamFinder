@@ -238,6 +238,22 @@ function getRequesterUserId(request) {
   return normalized || null;
 }
 
+function getRequesterUserName(request) {
+  const raw = request.headers["x-user-name"];
+  if (!raw || typeof raw !== "string") {
+    return "";
+  }
+  return raw.trim();
+}
+
+function getRequesterUserEmail(request) {
+  const raw = request.headers["x-user-email"];
+  if (!raw || typeof raw !== "string") {
+    return "";
+  }
+  return raw.trim();
+}
+
 function toArray(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -399,6 +415,39 @@ async function publish(topic, payload) {
   }
 }
 
+async function ensureSchema() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS profiles (
+      user_id TEXT PRIMARY KEY,
+      about TEXT NOT NULL DEFAULT '',
+      classes TEXT[] NOT NULL DEFAULT '{}',
+      skills TEXT[] NOT NULL DEFAULT '{}',
+      profile_picture_url TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+  );
+
+  // Legacy column from older schema versions.
+  await pool.query(`ALTER TABLE profiles DROP COLUMN IF EXISTS availability`);
+}
+
+async function publishProfileEvents(profile, request) {
+  const userName = getRequesterUserName(request);
+  const userEmail = getRequesterUserEmail(request);
+  const payload = {
+    userId: profile.user_id,
+    userName,
+    email: userEmail,
+    skills: profile.skills,
+    about: profile.about,
+    classes: profile.classes,
+    profilePictureUrl: profile.profile_picture_url,
+  };
+
+  await publish("profile.updated", payload);
+  await publish("user.profile.upserted", payload);
+}
+
 function ensureOwner(request, reply, userId) {
   const requesterId = getRequesterUserId(request);
   if (!requesterId) {
@@ -452,7 +501,7 @@ app.get("/:userId", async (request, reply) => {
   }
 
   const result = await pool.query(
-    `SELECT user_id, about, classes, skills, availability, profile_picture_url, updated_at
+    `SELECT user_id, about, classes, skills, profile_picture_url, updated_at
      FROM profiles
      WHERE user_id = $1`,
     [userId],
@@ -481,35 +530,28 @@ app.put("/:userId", async (request, reply) => {
 
   const body = request.body || {};
   const about = typeof body.about === "string" ? body.about : "";
-  const availability = typeof body.availability === "string" ? body.availability : "";
   const profilePictureUrl = typeof body.profilePictureUrl === "string" ? body.profilePictureUrl : "";
   const skills = toArray(body.skills);
   const classes = toArray(body.classes);
 
   try {
     const result = await pool.query(
-      `INSERT INTO profiles (user_id, about, classes, skills, availability, profile_picture_url, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `INSERT INTO profiles (user_id, about, classes, skills, profile_picture_url, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (user_id)
        DO UPDATE SET about = EXCLUDED.about,
                      classes = EXCLUDED.classes,
                      skills = EXCLUDED.skills,
-                     availability = EXCLUDED.availability,
                      profile_picture_url = EXCLUDED.profile_picture_url,
                      updated_at = NOW()
-       RETURNING user_id, about, classes, skills, availability, profile_picture_url, updated_at`,
-      [userId, about, classes, skills, availability, profilePictureUrl],
+       RETURNING user_id, about, classes, skills, profile_picture_url, updated_at`,
+      [userId, about, classes, skills, profilePictureUrl],
     );
 
     const profile = result.rows[0];
     const profilePictureViewUrl = await buildProfilePictureViewUrl(profile.profile_picture_url);
 
-    await publish("profile.updated", {
-      userId: profile.user_id,
-      skills: profile.skills,
-      about: profile.about,
-      classes: profile.classes,
-    });
+    await publishProfileEvents(profile, request);
 
     return reply.send({
       profile: {
@@ -573,22 +615,24 @@ app.post("/:userId/picture/confirm", async (request, reply) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO profiles (user_id, about, classes, skills, availability, profile_picture_url, updated_at)
-       VALUES ($1, '', '{}', '{}', '', $2, NOW())
+      `INSERT INTO profiles (user_id, about, classes, skills, profile_picture_url, updated_at)
+       VALUES ($1, '', '{}', '{}', $2, NOW())
        ON CONFLICT (user_id)
        DO UPDATE SET profile_picture_url = EXCLUDED.profile_picture_url,
                      updated_at = NOW()
-       RETURNING user_id, profile_picture_url, updated_at`,
+       RETURNING user_id, about, classes, skills, profile_picture_url, updated_at`,
       [userId, profilePictureUrl],
     );
 
-    const savedPictureUrl = result.rows[0].profile_picture_url;
+    const profile = result.rows[0];
+    const savedPictureUrl = profile.profile_picture_url;
     const profilePictureViewUrl = await buildProfilePictureViewUrl(savedPictureUrl);
+    await publishProfileEvents(profile, request);
 
     return reply.send({
       profilePictureUrl: savedPictureUrl,
       profilePictureViewUrl,
-      updatedAt: result.rows[0].updated_at,
+      updatedAt: profile.updated_at,
     });
   } catch (error) {
     request.log.error({ error }, "failed to confirm profile picture");
@@ -598,6 +642,7 @@ app.post("/:userId/picture/confirm", async (request, reply) => {
 
 async function start() {
   await app.register(cors, { origin: true });
+  await ensureSchema();
   await connectProducer();
   await app.listen({ port, host: "0.0.0.0" });
 }

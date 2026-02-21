@@ -18,6 +18,8 @@ const defaultSectionMaxGroupSize = Math.min(
   20,
 );
 const autoSeedCatalog = String(process.env.CLASS_AUTO_SEED || "true").toLowerCase() !== "false";
+const userProjectionConsumerGroup = String(process.env.USER_PROJECTION_CONSUMER_GROUP || "class-user-projection-v1").trim() || "class-user-projection-v1";
+const userProjectionTopics = ["user.identity.upserted", "user.profile.upserted", "user.authenticated", "profile.updated"];
 
 const defaultCatalogSeed = [
   { id: "CPSC 110", title: "Computation, Programs, and Programming", term: "2026W", description: "Introductory programming and problem solving." },
@@ -31,6 +33,7 @@ const defaultCatalogSeed = [
 ];
 
 let producer = null;
+let userProjectionConsumerRunning = false;
 
 function getRequesterUserId(request) {
   const raw = request.headers["x-user-id"];
@@ -60,6 +63,13 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
+function normalizeOptionalText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return value;
+}
+
 function looksLikeUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     String(value || "").trim(),
@@ -80,6 +90,20 @@ function toMaxGroupSize(raw, fallback = defaultSectionMaxGroupSize) {
     return fallback;
   }
   return Math.min(Math.max(Math.trunc(parsed), 2), 20);
+}
+
+function uniqueUserIds(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const userId = normalizeText(value);
+    if (!userId || seen.has(userId)) {
+      continue;
+    }
+    seen.add(userId);
+    out.push(userId);
+  }
+  return out;
 }
 
 function formatSection(section) {
@@ -208,6 +232,18 @@ async function ensureSchema() {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_groups_class_id ON groups (class_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_groups_project_section_id ON groups (project_section_id)`);
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS user_directory (
+      user_id TEXT PRIMARY KEY,
+      user_name TEXT NOT NULL DEFAULT '',
+      user_email TEXT NOT NULL DEFAULT '',
+      profile_picture_url TEXT NOT NULL DEFAULT '',
+      about TEXT NOT NULL DEFAULT '',
+      skills TEXT[] NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+  );
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_directory_name ON user_directory (user_name)`);
 
   await pool.query(
     `INSERT INTO project_sections (class_id, name, description, max_group_size, created_by_user_id)
@@ -252,6 +288,164 @@ async function ensureCatalogSeeded() {
   }
 
   app.log.info({ seeded: defaultCatalogSeed.length }, "class catalog seeded");
+}
+
+async function upsertIdentityProjection(payload) {
+  const userId = normalizeText(payload.userId || payload.user_id || "");
+  if (!userId) {
+    return;
+  }
+
+  const userName = normalizeText(payload.userName || payload.name || "");
+  const userEmail = normalizeText(payload.userEmail || payload.email || "");
+
+  await pool.query(
+    `INSERT INTO user_directory (user_id, user_name, user_email, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (user_id)
+     DO UPDATE SET user_name = CASE
+                                  WHEN EXCLUDED.user_name <> '' THEN EXCLUDED.user_name
+                                  ELSE user_directory.user_name
+                                END,
+                   user_email = CASE
+                                  WHEN EXCLUDED.user_email <> '' THEN EXCLUDED.user_email
+                                  ELSE user_directory.user_email
+                                END,
+                   updated_at = NOW()`,
+    [userId, userName, userEmail],
+  );
+}
+
+async function upsertProfileProjection(payload) {
+  const userId = normalizeText(payload.userId || payload.user_id || "");
+  if (!userId) {
+    return;
+  }
+
+  const userName = normalizeText(payload.userName || payload.name || "");
+  const userEmail = normalizeText(payload.userEmail || payload.email || "");
+  const profilePictureUrl = normalizeOptionalText(payload.profilePictureUrl || payload.profile_picture_url);
+  const about = normalizeOptionalText(payload.about);
+  const skills = Array.isArray(payload.skills)
+    ? payload.skills.map((item) => String(item).trim()).filter(Boolean)
+    : null;
+
+  await pool.query(
+    `INSERT INTO user_directory (user_id, user_name, user_email, profile_picture_url, about, skills, updated_at)
+     VALUES ($1, $2, $3, COALESCE($4, ''), COALESCE($5, ''), COALESCE($6::text[], '{}'), NOW())
+     ON CONFLICT (user_id)
+     DO UPDATE SET user_name = CASE
+                                  WHEN EXCLUDED.user_name <> '' THEN EXCLUDED.user_name
+                                  ELSE user_directory.user_name
+                                END,
+                   user_email = CASE
+                                  WHEN EXCLUDED.user_email <> '' THEN EXCLUDED.user_email
+                                  ELSE user_directory.user_email
+                                END,
+                   profile_picture_url = COALESCE($4, user_directory.profile_picture_url),
+                   about = COALESCE($5, user_directory.about),
+                   skills = COALESCE($6::text[], user_directory.skills),
+                   updated_at = NOW()`,
+    [userId, userName, userEmail, profilePictureUrl, about, skills],
+  );
+}
+
+async function handleUserProjectionEvent(topic, payload) {
+  if (!payload) {
+    return;
+  }
+
+  if (topic === "user.identity.upserted" || topic === "user.authenticated") {
+    await upsertIdentityProjection(payload);
+    return;
+  }
+
+  if (topic === "user.profile.upserted" || topic === "profile.updated") {
+    await upsertProfileProjection(payload);
+  }
+}
+
+async function ensureUserProjectionTopics(kafka) {
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    const metadata = await admin.fetchTopicMetadata();
+    const existingTopics = new Set((metadata.topics || []).map((topic) => topic.name));
+    const missingTopics = userProjectionTopics.filter((topic) => !existingTopics.has(topic));
+
+    if (missingTopics.length === 0) {
+      return;
+    }
+
+    await admin.createTopics({
+      waitForLeaders: true,
+      topics: missingTopics.map((topic) => ({
+        topic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      })),
+    });
+  } catch (error) {
+    app.log.warn({ error }, "failed to ensure user projection topics");
+  } finally {
+    try {
+      await admin.disconnect();
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+async function startUserProjectionConsumer() {
+  const broker = process.env.KAFKA_BROKER;
+  if (!broker) {
+    app.log.warn("KAFKA_BROKER is not set; user projection consumer disabled");
+    return;
+  }
+
+  const kafka = new Kafka({ clientId: "class-service-user-projection", brokers: [broker] });
+  const consumer = kafka.consumer({ groupId: userProjectionConsumerGroup });
+
+  try {
+    await ensureUserProjectionTopics(kafka);
+    await consumer.connect();
+    for (const topic of userProjectionTopics) {
+      await consumer.subscribe({ topic, fromBeginning: true });
+    }
+
+    consumer
+      .run({
+        eachMessage: async ({ topic, message }) => {
+          const text = message.value ? message.value.toString("utf8") : "";
+          if (!text) {
+            return;
+          }
+
+          let payload;
+          try {
+            payload = JSON.parse(text);
+          } catch (_error) {
+            app.log.warn({ topic, text }, "received invalid json projection event");
+            return;
+          }
+
+          try {
+            await handleUserProjectionEvent(topic, payload);
+          } catch (error) {
+            app.log.error({ error, topic, payload }, "failed to process user projection event");
+          }
+        },
+      })
+      .catch((error) => {
+        userProjectionConsumerRunning = false;
+        app.log.error({ error }, "user projection consumer crashed");
+      });
+
+    userProjectionConsumerRunning = true;
+    app.log.info({ topics: userProjectionTopics, groupId: userProjectionConsumerGroup }, "user projection consumer is running");
+  } catch (error) {
+    app.log.error({ error }, "failed to start user projection consumer");
+  }
 }
 
 async function loadClass(classId, client = pool) {
@@ -373,7 +567,7 @@ async function isGroupMember(groupId, userId, client = pool) {
 
 app.get("/health", async () => {
   await pool.query("SELECT 1");
-  return { status: "ok", service: "class-service" };
+  return { status: "ok", service: "class-service", userProjectionConsumerRunning };
 });
 
 app.get("/", async (request) => {
@@ -537,6 +731,46 @@ app.get("/enrollments/me", async (request, reply) => {
   };
 });
 
+app.post("/users/lookup", async (request, reply) => {
+  const requesterId = requireRequesterUserId(request, reply);
+  if (!requesterId) {
+    return;
+  }
+
+  const rawUserIds = Array.isArray((request.body || {}).userIds) ? (request.body || {}).userIds : [];
+  const userIds = uniqueUserIds(rawUserIds).slice(0, 500);
+  if (userIds.length === 0) {
+    return { users: [] };
+  }
+
+  const result = await pool.query(
+    `SELECT user_id, user_name, user_email, profile_picture_url, about, skills, updated_at
+     FROM user_directory
+     WHERE user_id = ANY($1::text[])`,
+    [userIds],
+  );
+
+  const userById = new Map(result.rows.map((row) => [row.user_id, row]));
+
+  return {
+    users: userIds.map((userId) => {
+      const row = userById.get(userId);
+      if (!row) {
+        return {
+          user_id: userId,
+          user_name: "",
+          user_email: "",
+          profile_picture_url: "",
+          about: "",
+          skills: [],
+          updated_at: null,
+        };
+      }
+      return row;
+    }),
+  };
+});
+
 app.get("/groups/me", async (request, reply) => {
   const requesterId = requireRequesterUserId(request, reply);
   if (!requesterId) {
@@ -619,10 +853,17 @@ app.get("/:classId/members", async (request, reply) => {
   }
 
   const members = await pool.query(
-    `SELECT user_id, created_at
-     FROM enrollments
-     WHERE class_id = $1
-     ORDER BY created_at ASC`,
+    `SELECT e.user_id,
+            e.created_at,
+            ud.user_name,
+            ud.user_email,
+            ud.profile_picture_url,
+            ud.about,
+            ud.skills
+     FROM enrollments e
+     LEFT JOIN user_directory ud ON ud.user_id = e.user_id
+     WHERE e.class_id = $1
+     ORDER BY e.created_at ASC`,
     [classId],
   );
 
@@ -716,12 +957,13 @@ app.post("/:classId/groups", async (request, reply) => {
   const client = await pool.connect();
 
   let createdGroup = null;
+  let classRecord = null;
 
   try {
     await client.query("BEGIN");
 
-    const classResult = await loadClass(classId, client);
-    if (!classResult) {
+    classRecord = await loadClass(classId, client);
+    if (!classRecord) {
       await client.query("ROLLBACK");
       return reply.code(404).send({ error: "class not found" });
     }
@@ -774,6 +1016,8 @@ app.post("/:classId/groups", async (request, reply) => {
   await publish("group.created", createdGroup.id, {
     groupId: createdGroup.id,
     classId,
+    className: classRecord ? classRecord.title : "",
+    groupName: createdGroup.name,
     ownerUserId,
     projectSectionId: null,
     projectSection: defaultGroupSectionName,
@@ -849,8 +1093,26 @@ app.get("/groups/:groupId/requests", async (request, reply) => {
 
   const sql =
     statusFilter === "ALL"
-      ? `SELECT group_id, user_id, status, created_at FROM group_requests WHERE group_id = $1 ORDER BY created_at DESC`
-      : `SELECT group_id, user_id, status, created_at FROM group_requests WHERE group_id = $1 AND status = $2 ORDER BY created_at DESC`;
+      ? `SELECT gr.group_id,
+                gr.user_id,
+                gr.status,
+                gr.created_at,
+                ud.user_name,
+                ud.profile_picture_url
+         FROM group_requests gr
+         LEFT JOIN user_directory ud ON ud.user_id = gr.user_id
+         WHERE gr.group_id = $1
+         ORDER BY gr.created_at DESC`
+      : `SELECT gr.group_id,
+                gr.user_id,
+                gr.status,
+                gr.created_at,
+                ud.user_name,
+                ud.profile_picture_url
+         FROM group_requests gr
+         LEFT JOIN user_directory ud ON ud.user_id = gr.user_id
+         WHERE gr.group_id = $1 AND gr.status = $2
+         ORDER BY gr.created_at DESC`;
 
   const params = statusFilter === "ALL" ? [groupId] : [groupId, statusFilter];
   const result = await pool.query(sql, params);
@@ -929,6 +1191,8 @@ app.post("/groups/:groupId/requests/:userId/approve", async (request, reply) => 
   await publish("group.member.added", groupId, {
     groupId,
     classId: group.class_id,
+    className: (await loadClass(group.class_id))?.title || "",
+    groupName: group.name,
     userId,
   });
 
@@ -1182,6 +1446,7 @@ async function start() {
   await ensureSchema();
   await ensureCatalogSeeded();
   await connectProducer();
+  await startUserProjectionConsumer();
   await app.listen({ port, host: "0.0.0.0" });
 }
 

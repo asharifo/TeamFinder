@@ -20,7 +20,7 @@ const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
   enableAutoPipelining: true,
 });
 const kafkaBroker = String(process.env.KAFKA_BROKER || "").trim();
-const groupEventsConsumerGroup = String(process.env.GROUP_EVENTS_CONSUMER_GROUP || "messaging-group-sync-v1").trim() || "messaging-group-sync-v1";
+const groupEventsConsumerGroup = String(process.env.GROUP_EVENTS_CONSUMER_GROUP || "messaging-group-sync-v2").trim() || "messaging-group-sync-v2";
 const groupLifecycleTopics = ["group.created", "group.member.added", "group.member.left", "group.disbanded"];
 
 const auth0IssuerBaseUrl = String(process.env.AUTH0_ISSUER_BASE_URL || "").trim();
@@ -58,6 +58,11 @@ function normalizeUserId(value) {
 function normalizeOptionalClassId(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
+}
+
+function normalizeOptionalLabel(value) {
+  const normalized = String(value || "").trim();
+  return normalized;
 }
 
 function looksLikeUuid(value) {
@@ -145,6 +150,9 @@ async function connectProducer() {
 }
 
 async function ensureSchema() {
+  await pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS class_name TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT ''`);
+
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_group_unique
      ON conversations (group_id)
@@ -179,7 +187,7 @@ async function publish(topic, key, payload) {
 
 async function loadGroupConversationForUpdate(groupId, client = pool) {
   const result = await client.query(
-    `SELECT id, type, class_id, group_id, created_at
+    `SELECT id, type, class_id, class_name, group_id, group_name, created_at
      FROM conversations
      WHERE type = 'GROUP'
        AND group_id = $1
@@ -189,29 +197,37 @@ async function loadGroupConversationForUpdate(groupId, client = pool) {
   return result.rowCount > 0 ? result.rows[0] : null;
 }
 
-async function ensureGroupConversation({ groupId, classId, client = pool }) {
+async function ensureGroupConversation({ groupId, classId, className, groupName, client = pool }) {
   const normalizedClassId = normalizeOptionalClassId(classId);
+  const normalizedClassName = normalizeOptionalLabel(className);
+  const normalizedGroupName = normalizeOptionalLabel(groupName);
   const existing = await loadGroupConversationForUpdate(groupId, client);
   if (!existing) {
     const inserted = await client.query(
-      `INSERT INTO conversations (type, class_id, group_id)
-       VALUES ('GROUP', $1, $2)
-       RETURNING id, type, class_id, group_id, created_at`,
-      [normalizedClassId, groupId],
+      `INSERT INTO conversations (type, class_id, class_name, group_id, group_name)
+       VALUES ('GROUP', $1, $2, $3, $4)
+       RETURNING id, type, class_id, class_name, group_id, group_name, created_at`,
+      [normalizedClassId, normalizedClassName, groupId, normalizedGroupName],
     );
     return inserted.rows[0];
   }
 
-  if (!normalizedClassId || existing.class_id === normalizedClassId) {
+  const shouldUpdateClassId = Boolean(normalizedClassId && existing.class_id !== normalizedClassId);
+  const shouldUpdateClassName = Boolean(normalizedClassName && existing.class_name !== normalizedClassName);
+  const shouldUpdateGroupName = Boolean(normalizedGroupName && existing.group_name !== normalizedGroupName);
+
+  if (!shouldUpdateClassId && !shouldUpdateClassName && !shouldUpdateGroupName) {
     return existing;
   }
 
   const updated = await client.query(
     `UPDATE conversations
-     SET class_id = $2
+     SET class_id = CASE WHEN $2 IS NOT NULL AND $2 <> '' THEN $2 ELSE class_id END,
+         class_name = CASE WHEN $3 IS NOT NULL AND $3 <> '' THEN $3 ELSE class_name END,
+         group_name = CASE WHEN $4 IS NOT NULL AND $4 <> '' THEN $4 ELSE group_name END
      WHERE id = $1
-     RETURNING id, type, class_id, group_id, created_at`,
-    [existing.id, normalizedClassId],
+     RETURNING id, type, class_id, class_name, group_id, group_name, created_at`,
+    [existing.id, normalizedClassId, normalizedClassName, normalizedGroupName],
   );
   return updated.rows[0];
 }
@@ -247,6 +263,8 @@ async function clearConversationState(conversationId, memberUserIds) {
 async function applyGroupCreatedEvent(payload) {
   const groupId = String((payload || {}).groupId || "").trim();
   const classId = normalizeOptionalClassId((payload || {}).classId);
+  const className = normalizeOptionalLabel((payload || {}).className);
+  const groupName = normalizeOptionalLabel((payload || {}).groupName);
   const ownerUserId = normalizeUserId((payload || {}).ownerUserId);
 
   if (!looksLikeUuid(groupId)) {
@@ -258,7 +276,7 @@ async function applyGroupCreatedEvent(payload) {
   try {
     await client.query("BEGIN");
 
-    const conversation = await ensureGroupConversation({ groupId, classId, client });
+    const conversation = await ensureGroupConversation({ groupId, classId, className, groupName, client });
     if (ownerUserId) {
       await client.query(
         `INSERT INTO conversation_members (conversation_id, user_id)
@@ -280,6 +298,8 @@ async function applyGroupCreatedEvent(payload) {
 async function applyGroupMemberAddedEvent(payload) {
   const groupId = String((payload || {}).groupId || "").trim();
   const classId = normalizeOptionalClassId((payload || {}).classId);
+  const className = normalizeOptionalLabel((payload || {}).className);
+  const groupName = normalizeOptionalLabel((payload || {}).groupName);
   const userId = normalizeUserId((payload || {}).userId);
 
   if (!looksLikeUuid(groupId) || !userId) {
@@ -290,7 +310,7 @@ async function applyGroupMemberAddedEvent(payload) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const conversation = await ensureGroupConversation({ groupId, classId, client });
+    const conversation = await ensureGroupConversation({ groupId, classId, className, groupName, client });
     await client.query(
       `INSERT INTO conversation_members (conversation_id, user_id)
        VALUES ($1, $2)
@@ -515,8 +535,12 @@ function formatConversationRow(row) {
     type: row.type,
     classId: row.class_id,
     class_id: row.class_id,
+    className: row.class_name || "",
+    class_name: row.class_name || "",
     groupId: row.group_id,
     group_id: row.group_id,
+    groupName: row.group_name || "",
+    group_name: row.group_name || "",
     createdAt: row.created_at,
     created_at: row.created_at,
   };
@@ -545,7 +569,7 @@ async function isMember(conversationId, userId, client = pool) {
 
 async function getGroupConversationForUser(groupId, userId) {
   const result = await pool.query(
-    `SELECT c.id, c.type, c.class_id, c.group_id, c.created_at
+    `SELECT c.id, c.type, c.class_id, c.class_name, c.group_id, c.group_name, c.created_at
      FROM conversations c
      JOIN conversation_members cm
        ON cm.conversation_id = c.id
@@ -561,7 +585,7 @@ async function getGroupConversationForUser(groupId, userId) {
 
 async function findExistingDmConversation(userA, userB, client = pool) {
   const result = await client.query(
-    `SELECT c.id, c.type, c.class_id, c.group_id, c.created_at
+    `SELECT c.id, c.type, c.class_id, c.class_name, c.group_id, c.group_name, c.created_at
      FROM conversations c
      JOIN conversation_members cm_a
        ON cm_a.conversation_id = c.id
@@ -654,9 +678,9 @@ async function createOrGetDmConversation(requesterId, otherUserId) {
 
     if (!conversation) {
       const inserted = await client.query(
-        `INSERT INTO conversations (type, class_id, group_id)
-         VALUES ('DM', NULL, NULL)
-         RETURNING id, type, class_id, group_id, created_at`,
+        `INSERT INTO conversations (type, class_id, class_name, group_id, group_name)
+         VALUES ('DM', NULL, '', NULL, '')
+         RETURNING id, type, class_id, class_name, group_id, group_name, created_at`,
       );
 
       conversation = inserted.rows[0];
@@ -957,7 +981,9 @@ app.get("/conversations", async (request, reply) => {
     `SELECT c.id,
             c.type,
             c.class_id,
+            c.class_name,
             c.group_id,
+            c.group_name,
             c.created_at,
             COALESCE(array_agg(cm_all.user_id ORDER BY cm_all.user_id), '{}') AS members,
             lm.id AS last_message_id,
@@ -991,7 +1017,9 @@ app.get("/conversations", async (request, reply) => {
       id: row.id,
       type: row.type,
       classId: row.class_id,
+      className: row.class_name || "",
       groupId: row.group_id,
+      groupName: row.group_name || "",
       createdAt: row.created_at,
       members: row.members || [],
       unreadCount: Math.max(0, Number(unreadRaw[row.id] || 0)),

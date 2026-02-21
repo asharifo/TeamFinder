@@ -266,7 +266,7 @@ export default function ProfilePage() {
           {recommendations.map((item) => (
             <article className="result-item" key={`${item.user_id}-${item.target_user_id}`}>
               <div>
-                <h4>{item.target_user_id}</h4>
+                <h4>{item.target_user_name || "Unknown Student"}</h4>
                 <p>Score: {item.score}</p>
                 <small>{Array.isArray(item.reasons) ? item.reasons.join(" | ") : ""}</small>
               </div>

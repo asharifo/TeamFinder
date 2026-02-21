@@ -297,7 +297,7 @@ export default function ClassDetailPage() {
   );
 
   const approveRequest = useCallback(
-    async (groupId, userId) => {
+    async (groupId, userId, userName) => {
       setError("");
       setInfo("");
 
@@ -311,7 +311,7 @@ export default function ClassDetailPage() {
             body: JSON.stringify({}),
           }
         );
-        setInfo(`Approved request from ${userId}`);
+        setInfo(`Approved request from ${userName || "student"}`);
         await loadClassData();
       } catch (approveError) {
         setError(approveError.message || "Failed to approve request");
@@ -321,7 +321,7 @@ export default function ClassDetailPage() {
   );
 
   const rejectRequest = useCallback(
-    async (groupId, userId) => {
+    async (groupId, userId, userName) => {
       setError("");
       setInfo("");
 
@@ -335,7 +335,7 @@ export default function ClassDetailPage() {
             body: JSON.stringify({}),
           }
         );
-        setInfo(`Rejected request from ${userId}`);
+        setInfo(`Rejected request from ${userName || "student"}`);
         await loadClassData();
       } catch (rejectError) {
         setError(rejectError.message || "Failed to reject request");
@@ -534,7 +534,7 @@ export default function ClassDetailPage() {
                 key={`${requestItem.groupId}-${requestItem.user_id}`}
               >
                 <div>
-                  <h4>{requestItem.user_id}</h4>
+                  <h4>{requestItem.user_name || "Unknown Student"}</h4>
                   <p>Group: {requestItem.groupName}</p>
                   <small>
                     Requested {formatDateTime(requestItem.created_at)}
@@ -545,7 +545,11 @@ export default function ClassDetailPage() {
                     className="btn btn-primary"
                     type="button"
                     onClick={() =>
-                      approveRequest(requestItem.groupId, requestItem.user_id)
+                      approveRequest(
+                        requestItem.groupId,
+                        requestItem.user_id,
+                        requestItem.user_name
+                      )
                     }
                   >
                     Approve
@@ -554,7 +558,11 @@ export default function ClassDetailPage() {
                     className="btn btn-ghost"
                     type="button"
                     onClick={() =>
-                      rejectRequest(requestItem.groupId, requestItem.user_id)
+                      rejectRequest(
+                        requestItem.groupId,
+                        requestItem.user_id,
+                        requestItem.user_name
+                      )
                     }
                   >
                     Reject
@@ -624,10 +632,11 @@ export default function ClassDetailPage() {
           <ul className="member-list">
             {studentsPagination.items.map((member) => {
               const userId = member.user_id;
+              const userName = member.user_name || "Unknown Student";
               return (
                 <li key={userId}>
                   <div>
-                    <span>{userId}</span>
+                    <span>{userName}</span>
                     <small>{formatDateTime(member.created_at)}</small>
                   </div>
                 </li>

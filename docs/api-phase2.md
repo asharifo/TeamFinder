@@ -23,6 +23,7 @@ Gateway verifies Auth0 access tokens and forwards trusted headers:
 - `POST /api/classes/enrollments` (auth, body: `{ "classId": "CPSC210" }`)
 - `GET /api/classes/enrollments/me` (auth)
 - `GET /api/classes/groups/me?classId=<id>` (auth)
+- `POST /api/classes/users/lookup` (auth, body: `{ "userIds": ["auth0|..."] }`)
 - `GET /api/classes/:classId/members` (auth, enrolled users)
 - `GET /api/classes/:classId/project-sections`
 - `POST /api/classes/:classId/project-sections` (auth, enrolled users)
@@ -49,6 +50,9 @@ Gateway verifies Auth0 access tokens and forwards trusted headers:
 - `GET /api/messages/users/:userId/unread` (self only)
 
 ## Internal Eventing
+- User projection events:
+  - `user.identity.upserted`
+  - `user.profile.upserted`
 - GROUP conversation lifecycle is synchronized by `messaging-service` consuming Kafka topics:
   - `group.created`
   - `group.member.added`

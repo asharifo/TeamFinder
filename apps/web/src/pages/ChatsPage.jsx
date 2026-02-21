@@ -43,17 +43,33 @@ function saveHiddenConversationIds(storageKey, conversationIds) {
   }
 }
 
-function formatConversationLabel(conversation) {
+function formatConversationLabel(conversation, currentUserId, resolveUserName) {
   if (conversation.type === "DM") {
-    return `DM (${conversation.members.join(", ")})`;
+    const memberIds = Array.isArray(conversation.members) ? conversation.members : [];
+    const otherMemberIds = memberIds.filter((userId) => userId !== currentUserId);
+    const labelIds = otherMemberIds.length > 0 ? otherMemberIds : memberIds;
+    const names = labelIds.map((userId) => resolveUserName(userId)).filter(Boolean);
+    return names.length > 0 ? names.join(", ") : "Direct Message";
   }
   if (conversation.type === "GROUP") {
-    return `Group ${conversation.groupId || conversation.id}`;
+    const groupName = String(conversation.groupName || conversation.group_name || "").trim();
+    const classCode = String(conversation.classId || conversation.class_id || "").trim();
+    if (groupName && classCode) {
+      return `${groupName} (${classCode})`;
+    }
+    if (groupName) {
+      return groupName;
+    }
+    if (classCode) {
+      return `Group Chat (${classCode})`;
+    }
+    return "Group Chat";
   }
   if (conversation.type === "CLASS") {
-    return `Class ${conversation.classId || conversation.id}`;
+    const className = String(conversation.className || conversation.class_name || "").trim();
+    return className ? `Class ${className}` : "Class Chat";
   }
-  return conversation.id;
+  return "Conversation";
 }
 
 function uniqueMessages(messages) {
@@ -80,6 +96,7 @@ export default function ChatsPage() {
   const [typingUsersByConversation, setTypingUsersByConversation] = useState(
     {}
   );
+  const [userDirectoryById, setUserDirectoryById] = useState({});
   const [draftMessage, setDraftMessage] = useState("");
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
@@ -91,15 +108,158 @@ export default function ChatsPage() {
   const joinedConversationRef = useRef("");
   const typingTimeoutRef = useRef(null);
   const selectedConversationIdRef = useRef("");
+  const userDirectoryRef = useRef(userDirectoryById);
 
   const preselectedConversationId = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get("conversation") || "";
   }, [location.search]);
 
+  useEffect(() => {
+    userDirectoryRef.current = userDirectoryById;
+  }, [userDirectoryById]);
+
   const hiddenConversationsStorageKey = useMemo(
     () => `teamfinder:hidden-conversations:${session.user?.id || "anonymous"}`,
     [session.user?.id]
+  );
+
+  const ensureUserDirectoryEntries = useCallback(
+    async (rawUserIds) => {
+      const requestedIds = Array.from(
+        new Set(
+          (rawUserIds || [])
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        )
+      );
+      if (requestedIds.length === 0) {
+        return;
+      }
+
+      const missingUserIds = requestedIds.filter(
+        (userId) =>
+          userId !== session.user?.id && !userDirectoryRef.current[userId]
+      );
+      if (missingUserIds.length === 0) {
+        return;
+      }
+
+      try {
+        const payload = await apiFetch("/api/classes/users/lookup", {
+          method: "POST",
+          body: JSON.stringify({ userIds: missingUserIds }),
+        });
+
+        const users = Array.isArray(payload.users) ? payload.users : [];
+        if (users.length === 0) {
+          return;
+        }
+
+        setUserDirectoryById((prev) => {
+          const next = { ...prev };
+          for (const user of users) {
+            const userId = String(user.user_id || "").trim();
+            if (!userId) {
+              continue;
+            }
+            next[userId] = {
+              userName: typeof user.user_name === "string" ? user.user_name : "",
+              userEmail: typeof user.user_email === "string" ? user.user_email : "",
+              profilePictureUrl:
+                typeof user.profile_picture_url === "string"
+                  ? user.profile_picture_url
+                  : "",
+              about: typeof user.about === "string" ? user.about : "",
+              skills: Array.isArray(user.skills) ? user.skills : [],
+            };
+          }
+          return next;
+        });
+      } catch (_error) {
+        // Best-effort enrichment only.
+      }
+    },
+    [apiFetch, session.user?.id]
+  );
+
+  const resolveUserName = useCallback(
+    (userId) => {
+      const normalizedUserId = String(userId || "").trim();
+      if (!normalizedUserId) {
+        return "Unknown User";
+      }
+      if (normalizedUserId === session.user?.id) {
+        return session.user?.name || "You";
+      }
+      return (
+        userDirectoryById[normalizedUserId]?.userName ||
+        "Unknown User"
+      );
+    },
+    [session.user?.id, session.user?.name, userDirectoryById]
+  );
+
+  const ensureGroupConversationLabels = useCallback(
+    async (conversationsToCheck) => {
+      const targets = (conversationsToCheck || []).filter(
+        (conversation) =>
+          conversation.type === "GROUP" &&
+          conversation.groupId &&
+          (!conversation.groupName || !conversation.classId)
+      );
+      if (targets.length === 0) {
+        return;
+      }
+
+      const updates = await Promise.all(
+        targets.map(async (conversation) => {
+          try {
+            const groupPayload = await apiFetch(
+              `/api/classes/groups/${encodeURIComponent(conversation.groupId)}`
+            );
+            const group = groupPayload.group || {};
+            const groupName = String(group.name || "").trim();
+            const classCode = String(group.classId || group.class_id || "").trim();
+
+            return {
+              id: conversation.id,
+              groupName,
+              classCode,
+            };
+          } catch (_error) {
+            return null;
+          }
+        })
+      );
+
+      const updatesById = new Map(
+        updates
+          .filter(
+            (item) => item && (item.groupName || item.classCode)
+          )
+          .map((item) => [item.id, item])
+      );
+      if (updatesById.size === 0) {
+        return;
+      }
+
+      setConversations((prev) =>
+        prev.map((conversation) => {
+          const update = updatesById.get(conversation.id);
+          if (!update) {
+            return conversation;
+          }
+          return {
+            ...conversation,
+            groupName: update.groupName || conversation.groupName || "",
+            classId: update.classCode || conversation.classId || "",
+            className: update.classCode || conversation.className || "",
+          };
+        })
+      );
+    },
+    [apiFetch]
   );
 
   useEffect(() => {
@@ -140,9 +300,20 @@ export default function ChatsPage() {
     return typingUsersByConversation[selectedConversationId] || [];
   }, [typingUsersByConversation, selectedConversationId]);
 
-  const otherTypingUsers = useMemo(() => {
-    return typingUsers.filter((userId) => userId !== session.user?.id);
-  }, [typingUsers, session.user?.id]);
+  const otherTypingUserNames = useMemo(() => {
+    return typingUsers
+      .filter((userId) => userId !== session.user?.id)
+      .map((userId) => resolveUserName(userId));
+  }, [typingUsers, session.user?.id, resolveUserName]);
+
+  const presenceUserNames = useMemo(() => {
+    return presenceUsers.map((userId) => {
+      if (userId === session.user?.id) {
+        return "You";
+      }
+      return resolveUserName(userId);
+    });
+  }, [presenceUsers, resolveUserName, session.user?.id]);
 
   const loadConversations = useCallback(async () => {
     setIsLoadingConversations(true);
@@ -151,6 +322,19 @@ export default function ChatsPage() {
       const payload = await apiFetch("/api/messages/conversations?limit=100");
       const nextConversations = payload.conversations || [];
       setConversations(nextConversations);
+      await ensureUserDirectoryEntries(
+        nextConversations.flatMap((conversation) => {
+          const members = Array.isArray(conversation.members)
+            ? conversation.members
+            : [];
+          const senderId =
+            conversation.lastMessage?.senderUserId ||
+            conversation.lastMessage?.sender_user_id ||
+            "";
+          return [...members, senderId];
+        })
+      );
+      await ensureGroupConversationLabels(nextConversations);
       if (
         preselectedConversationId &&
         nextConversations.some((item) => item.id === preselectedConversationId)
@@ -166,7 +350,12 @@ export default function ChatsPage() {
     } finally {
       setIsLoadingConversations(false);
     }
-  }, [apiFetch, preselectedConversationId]);
+  }, [
+    apiFetch,
+    ensureGroupConversationLabels,
+    ensureUserDirectoryEntries,
+    preselectedConversationId,
+  ]);
 
   const loadMessages = useCallback(
     async (conversationId) => {
@@ -183,7 +372,13 @@ export default function ChatsPage() {
             conversationId
           )}/messages?limit=200`
         );
-        setMessages(payload.messages || []);
+        const nextMessages = payload.messages || [];
+        setMessages(nextMessages);
+        await ensureUserDirectoryEntries(
+          nextMessages.map(
+            (message) => message.sender_user_id || message.senderUserId || ""
+          )
+        );
         await apiFetch(
           `/api/messages/conversations/${encodeURIComponent(
             conversationId
@@ -199,7 +394,7 @@ export default function ChatsPage() {
         setIsLoadingMessages(false);
       }
     },
-    [apiFetch]
+    [apiFetch, ensureUserDirectoryEntries]
   );
 
   const loadPresence = useCallback(
@@ -215,12 +410,14 @@ export default function ChatsPage() {
             conversationId
           )}/presence`
         );
-        setPresenceUsers(payload.onlineUserIds || []);
+        const nextOnlineUserIds = payload.onlineUserIds || [];
+        setPresenceUsers(nextOnlineUserIds);
+        await ensureUserDirectoryEntries(nextOnlineUserIds);
       } catch (_error) {
         setPresenceUsers([]);
       }
     },
-    [apiFetch]
+    [apiFetch, ensureUserDirectoryEntries]
   );
 
   useEffect(() => {
@@ -289,6 +486,9 @@ export default function ChatsPage() {
     });
 
     socket.on("message:new", ({ conversationId, message }) => {
+      const senderId = message?.sender_user_id || message?.senderUserId || "";
+      ensureUserDirectoryEntries([senderId]);
+
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === conversationId
@@ -311,6 +511,7 @@ export default function ChatsPage() {
     });
 
     socket.on("presence:update", ({ conversationId, userId, isOnline }) => {
+      ensureUserDirectoryEntries([userId]);
       if (conversationId !== selectedConversationIdRef.current) {
         return;
       }
@@ -324,6 +525,7 @@ export default function ChatsPage() {
     });
 
     socket.on("typing:update", ({ conversationId, userId, isTyping }) => {
+      ensureUserDirectoryEntries([userId]);
       setTypingUsersByConversation((prev) => {
         const existing = new Set(prev[conversationId] || []);
         if (isTyping) {
@@ -337,7 +539,7 @@ export default function ChatsPage() {
         };
       });
     });
-  }, []);
+  }, [ensureUserDirectoryEntries]);
 
   const connectRealtime = useCallback(async () => {
     setError("");
@@ -405,6 +607,7 @@ export default function ChatsPage() {
         });
         if (response.ok && Array.isArray(response.onlineUserIds)) {
           setPresenceUsers(response.onlineUserIds);
+          ensureUserDirectoryEntries(response.onlineUserIds);
         }
       }
 
@@ -412,7 +615,7 @@ export default function ChatsPage() {
     }
 
     syncRealtimeRoom();
-  }, [selectedConversationId, emitWithAck, isRealtimeConnected]);
+  }, [selectedConversationId, emitWithAck, ensureUserDirectoryEntries, isRealtimeConnected]);
 
   const sendMessageHttp = useCallback(
     async (conversationId, body) => {
@@ -543,7 +746,13 @@ export default function ChatsPage() {
                 onClick={() => setSelectedConversationId(conversation.id)}
               >
                 <div className="conversation-title-row">
-                  <strong>{formatConversationLabel(conversation)}</strong>
+                  <strong>
+                    {formatConversationLabel(
+                      conversation,
+                      session.user?.id,
+                      resolveUserName
+                    )}
+                  </strong>
                   {conversation.unreadCount > 0 ? (
                     <span className="badge solid">
                       {conversation.unreadCount}
@@ -558,7 +767,9 @@ export default function ChatsPage() {
                 type="button"
                 className="conversation-remove-btn"
                 aria-label={`Remove ${formatConversationLabel(
-                  conversation
+                  conversation,
+                  session.user?.id,
+                  resolveUserName
                 )} from panel`}
                 onClick={() => handleHideConversation(conversation.id)}
               >
@@ -579,7 +790,11 @@ export default function ChatsPage() {
           <h2>Messages</h2>
           {selectedConversation && (
             <span className="muted">
-              {formatConversationLabel(selectedConversation)}
+              {formatConversationLabel(
+                selectedConversation,
+                session.user?.id,
+                resolveUserName
+              )}
             </span>
           )}
         </div>
@@ -595,15 +810,15 @@ export default function ChatsPage() {
             <div className="presence-row">
               <strong>Online in this chat:</strong>
               <span>
-                {presenceUsers.length > 0
-                  ? presenceUsers.join(", ")
+                {presenceUserNames.length > 0
+                  ? presenceUserNames.join(", ")
                   : "No one currently online"}
               </span>
             </div>
 
-            {otherTypingUsers.length > 0 ? (
+            {otherTypingUserNames.length > 0 ? (
               <p className="typing-indicator">
-                Typing: {otherTypingUsers.join(", ")}
+                Typing: {otherTypingUserNames.join(", ")}
               </p>
             ) : null}
 
@@ -623,7 +838,7 @@ export default function ChatsPage() {
                     key={message.id}
                   >
                     <header>
-                      <strong>{mine ? "You" : sender}</strong>
+                      <strong>{mine ? "You" : resolveUserName(sender)}</strong>
                       <small>
                         {created ? new Date(created).toLocaleTimeString() : ""}
                       </small>
