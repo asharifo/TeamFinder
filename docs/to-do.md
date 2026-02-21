@@ -206,3 +206,4 @@ Single source of truth: React Query cache
 # Add friend functionality through profile view and student list view in classes
 # Possibly restrict chatting to friends
 # Possible add message functionality through profile and student list view in classes
+# Employ more robust pagination with page/offset/cursor at the relevant locations
