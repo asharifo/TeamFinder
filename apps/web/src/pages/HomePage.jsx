@@ -32,6 +32,7 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoadingEnrollments, setIsLoadingEnrollments] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
+  const [pendingUnenrollClassId, setPendingUnenrollClassId] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const accentClasses = ["accent-cyan", "accent-violet", "accent-amber", "accent-emerald"];
@@ -126,6 +127,31 @@ export default function HomePage() {
     [apiFetch, loadEnrollments],
   );
 
+  const unenrollClass = useCallback(
+    async (classId) => {
+      if (!classId || pendingUnenrollClassId) {
+        return;
+      }
+
+      setPendingUnenrollClassId(classId);
+      setInfo("");
+      setError("");
+
+      try {
+        await apiFetch(`/api/classes/enrollments/${encodeURIComponent(classId)}`, {
+          method: "DELETE",
+        });
+        setInfo(`Un-enrolled from ${classId}`);
+        await loadEnrollments();
+      } catch (unenrollError) {
+        setError(unenrollError.message || "Failed to un-enroll from class");
+      } finally {
+        setPendingUnenrollClassId("");
+      }
+    },
+    [apiFetch, loadEnrollments, pendingUnenrollClassId],
+  );
+
   return (
     <div className="dashboard-shell">
       <section className="dashboard-pane classes-pane">
@@ -140,17 +166,27 @@ export default function HomePage() {
 
         <div className="enrollment-list">
           {enrollments.map((item, index) => (
-            <ClassSectionCard
-              key={item.classId}
-              to={`/classes/${encodeURIComponent(item.classId)}`}
-              classId={item.classId}
-              title={item.title}
-              term={item.term}
-              description={item.description}
-              meta={item.enrolledAt ? `Enrolled: ${new Date(item.enrolledAt).toLocaleString()}` : ""}
-              accentClass={accentClasses[index % accentClasses.length]}
-              className="enrollment-row"
-            />
+            <article className="enrollment-item-shell" key={item.classId}>
+              <ClassSectionCard
+                to={`/classes/${encodeURIComponent(item.classId)}`}
+                classId={item.classId}
+                title={item.title}
+                term={item.term}
+                description={item.description}
+                meta={item.enrolledAt ? `Enrolled: ${new Date(item.enrolledAt).toLocaleString()}` : ""}
+                accentClass={accentClasses[index % accentClasses.length]}
+                className="enrollment-row"
+              />
+              <button
+                className="class-unenroll-btn"
+                type="button"
+                disabled={pendingUnenrollClassId === item.classId}
+                aria-label={`Un-enroll from ${item.classId}`}
+                onClick={() => unenrollClass(item.classId)}
+              >
+                {pendingUnenrollClassId === item.classId ? "..." : "Remove"}
+              </button>
+            </article>
           ))}
         </div>
       </section>

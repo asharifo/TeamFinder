@@ -426,6 +426,10 @@ textarea {
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
+.enrollment-item-shell {
+  position: relative;
+}
+
 .result-item {
   display: flex;
   justify-content: space-between;
@@ -464,6 +468,45 @@ textarea {
 .class-section-action {
   display: flex;
   align-items: center;
+}
+
+.class-unenroll-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: 1px solid rgba(255, 122, 122, 0.65);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(129, 28, 28, 0.9);
+  color: #ffe4e4;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.enrollment-item-shell:hover .class-unenroll-btn,
+.enrollment-item-shell:focus-within .class-unenroll-btn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.class-unenroll-btn:hover:not(:disabled),
+.class-unenroll-btn:focus-visible:not(:disabled) {
+  background: rgba(156, 32, 32, 0.95);
+  border-color: rgba(255, 148, 148, 0.78);
+}
+
+.class-unenroll-btn:disabled {
+  opacity: 1;
+  pointer-events: none;
+  transform: translateY(0);
+  cursor: wait;
 }
 
 .class-card:hover,
@@ -566,6 +609,14 @@ small {
 .conversation-remove-btn:hover {
   background: rgba(165, 34, 34, 0.96);
   border-color: rgba(255, 158, 158, 0.95);
+}
+
+@media (hover: none) {
+  .class-unenroll-btn {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
 }
 
 .member-list {
@@ -837,7 +888,7 @@ small {
 }
 
 .enrollment-row {
-  padding: 13px 14px;
+  padding: 13px 84px 13px 14px;
 }
 
 .enrollment-row .class-section-main h3 {
@@ -1115,6 +1166,7 @@ small {
   }
 
   .enrollment-row {
+    padding: 13px 14px;
     grid-template-columns: auto minmax(0, 1fr);
   }
 

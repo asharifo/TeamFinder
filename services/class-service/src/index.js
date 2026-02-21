@@ -704,6 +704,123 @@ app.post("/enrollments", async (request, reply) => {
   return reply.code(201).send({ enrolled: true, userId, classId });
 });
 
+app.delete("/enrollments/:classId", async (request, reply) => {
+  const userId = requireRequesterUserId(request, reply);
+  if (!userId) {
+    return;
+  }
+
+  const classId = normalizeClassId(request.params.classId);
+  if (!classId) {
+    return reply.code(400).send({ error: "classId is required" });
+  }
+
+  const client = await pool.connect();
+  const disbandedGroupIds = [];
+  let classRecord = null;
+
+  try {
+    await client.query("BEGIN");
+
+    classRecord = await loadClass(classId, client);
+    if (!classRecord) {
+      await client.query("ROLLBACK");
+      return reply.code(404).send({ error: "class not found" });
+    }
+
+    const enrollmentResult = await client.query(
+      `SELECT 1
+       FROM enrollments
+       WHERE user_id = $1 AND class_id = $2`,
+      [userId, classId],
+    );
+    if (enrollmentResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return reply.code(404).send({ error: "you are not enrolled in this class" });
+    }
+
+    const ownedGroupsResult = await client.query(
+      `SELECT id
+       FROM groups
+       WHERE class_id = $1 AND owner_user_id = $2
+       ORDER BY created_at
+       FOR UPDATE`,
+      [classId, userId],
+    );
+
+    for (const row of ownedGroupsResult.rows) {
+      const memberCount = await countGroupMembers(row.id, client);
+      if (memberCount > 1) {
+        await client.query("ROLLBACK");
+        return reply.code(409).send({
+          error: "group owner must transfer ownership or disband groups before un-enrolling",
+          groupId: row.id,
+        });
+      }
+    }
+
+    for (const row of ownedGroupsResult.rows) {
+      await client.query(`DELETE FROM groups WHERE id = $1`, [row.id]);
+      disbandedGroupIds.push(row.id);
+    }
+
+    await client.query(
+      `DELETE FROM group_members gm
+       USING groups g
+       WHERE gm.group_id = g.id
+         AND g.class_id = $1
+         AND gm.user_id = $2`,
+      [classId, userId],
+    );
+
+    await client.query(
+      `DELETE FROM group_requests gr
+       USING groups g
+       WHERE gr.group_id = g.id
+         AND g.class_id = $1
+         AND gr.user_id = $2`,
+      [classId, userId],
+    );
+
+    await client.query(
+      `DELETE FROM enrollments
+       WHERE user_id = $1 AND class_id = $2`,
+      [userId, classId],
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    request.log.error({ error }, "failed to delete enrollment");
+    return reply.code(500).send({ error: "internal error" });
+  } finally {
+    client.release();
+  }
+
+  for (const groupId of disbandedGroupIds) {
+    await publish("group.disbanded", groupId, {
+      groupId,
+      classId,
+      disbandedByUserId: userId,
+      reason: "class unenrollment",
+    });
+  }
+
+  await publish("class.enrollment.deleted", classId, {
+    userId,
+    classId,
+    className: classRecord ? classRecord.title : "",
+    disbandedGroupIds,
+  });
+
+  return reply.send({
+    enrolled: false,
+    userId,
+    classId,
+    disbandedGroupIds,
+  });
+});
+
 app.get("/enrollments/me", async (request, reply) => {
   const userId = requireRequesterUserId(request, reply);
   if (!userId) {
