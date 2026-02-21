@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { io } from "socket.io-client";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -26,7 +32,11 @@ function saveHiddenConversationIds(storageKey, conversationIds) {
   }
 
   try {
-    const uniqueIds = Array.from(new Set((conversationIds || []).map((value) => String(value)).filter(Boolean)));
+    const uniqueIds = Array.from(
+      new Set(
+        (conversationIds || []).map((value) => String(value)).filter(Boolean)
+      )
+    );
     window.localStorage.setItem(storageKey, JSON.stringify(uniqueIds));
   } catch (_error) {
     // Ignore localStorage persistence errors.
@@ -67,7 +77,9 @@ export default function ChatsPage() {
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [messages, setMessages] = useState([]);
   const [presenceUsers, setPresenceUsers] = useState([]);
-  const [typingUsersByConversation, setTypingUsersByConversation] = useState({});
+  const [typingUsersByConversation, setTypingUsersByConversation] = useState(
+    {}
+  );
   const [draftMessage, setDraftMessage] = useState("");
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
@@ -87,27 +99,41 @@ export default function ChatsPage() {
 
   const hiddenConversationsStorageKey = useMemo(
     () => `teamfinder:hidden-conversations:${session.user?.id || "anonymous"}`,
-    [session.user?.id],
+    [session.user?.id]
   );
 
   useEffect(() => {
-    setHiddenConversationIds(loadHiddenConversationIds(hiddenConversationsStorageKey));
+    setHiddenConversationIds(
+      loadHiddenConversationIds(hiddenConversationsStorageKey)
+    );
   }, [hiddenConversationsStorageKey]);
 
   useEffect(() => {
-    saveHiddenConversationIds(hiddenConversationsStorageKey, hiddenConversationIds);
+    saveHiddenConversationIds(
+      hiddenConversationsStorageKey,
+      hiddenConversationIds
+    );
   }, [hiddenConversationsStorageKey, hiddenConversationIds]);
 
-  const hiddenConversationSet = useMemo(() => new Set(hiddenConversationIds), [hiddenConversationIds]);
+  const hiddenConversationSet = useMemo(
+    () => new Set(hiddenConversationIds),
+    [hiddenConversationIds]
+  );
 
   const visibleConversations = useMemo(
-    () => conversations.filter((conversation) => !hiddenConversationSet.has(conversation.id)),
-    [conversations, hiddenConversationSet],
+    () =>
+      conversations.filter(
+        (conversation) => !hiddenConversationSet.has(conversation.id)
+      ),
+    [conversations, hiddenConversationSet]
   );
 
   const selectedConversation = useMemo(
-    () => visibleConversations.find((conversation) => conversation.id === selectedConversationId) || null,
-    [visibleConversations, selectedConversationId],
+    () =>
+      visibleConversations.find(
+        (conversation) => conversation.id === selectedConversationId
+      ) || null,
+    [visibleConversations, selectedConversationId]
   );
 
   const typingUsers = useMemo(() => {
@@ -125,9 +151,14 @@ export default function ChatsPage() {
       const payload = await apiFetch("/api/messages/conversations?limit=100");
       const nextConversations = payload.conversations || [];
       setConversations(nextConversations);
-      if (preselectedConversationId && nextConversations.some((item) => item.id === preselectedConversationId)) {
+      if (
+        preselectedConversationId &&
+        nextConversations.some((item) => item.id === preselectedConversationId)
+      ) {
         setHiddenConversationIds((currentValue) =>
-          currentValue.filter((conversationId) => conversationId !== preselectedConversationId),
+          currentValue.filter(
+            (conversationId) => conversationId !== preselectedConversationId
+          )
         );
       }
     } catch (fetchError) {
@@ -148,20 +179,27 @@ export default function ChatsPage() {
 
       try {
         const payload = await apiFetch(
-          `/api/messages/conversations/${encodeURIComponent(conversationId)}/messages?limit=200`,
+          `/api/messages/conversations/${encodeURIComponent(
+            conversationId
+          )}/messages?limit=200`
         );
         setMessages(payload.messages || []);
-        await apiFetch(`/api/messages/conversations/${encodeURIComponent(conversationId)}/read`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
+        await apiFetch(
+          `/api/messages/conversations/${encodeURIComponent(
+            conversationId
+          )}/read`,
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+          }
+        );
       } catch (fetchError) {
         setError(fetchError.message || "Failed to load messages");
       } finally {
         setIsLoadingMessages(false);
       }
     },
-    [apiFetch],
+    [apiFetch]
   );
 
   const loadPresence = useCallback(
@@ -172,13 +210,17 @@ export default function ChatsPage() {
       }
 
       try {
-        const payload = await apiFetch(`/api/messages/conversations/${encodeURIComponent(conversationId)}/presence`);
+        const payload = await apiFetch(
+          `/api/messages/conversations/${encodeURIComponent(
+            conversationId
+          )}/presence`
+        );
         setPresenceUsers(payload.onlineUserIds || []);
       } catch (_error) {
         setPresenceUsers([]);
       }
     },
-    [apiFetch],
+    [apiFetch]
   );
 
   useEffect(() => {
@@ -187,10 +229,18 @@ export default function ChatsPage() {
 
   useEffect(() => {
     setSelectedConversationId((currentValue) => {
-      if (preselectedConversationId && visibleConversations.some((item) => item.id === preselectedConversationId)) {
+      if (
+        preselectedConversationId &&
+        visibleConversations.some(
+          (item) => item.id === preselectedConversationId
+        )
+      ) {
         return preselectedConversationId;
       }
-      if (currentValue && visibleConversations.some((item) => item.id === currentValue)) {
+      if (
+        currentValue &&
+        visibleConversations.some((item) => item.id === currentValue)
+      ) {
         return currentValue;
       }
       return visibleConversations.length > 0 ? visibleConversations[0].id : "";
@@ -224,73 +274,70 @@ export default function ChatsPage() {
     };
   }, []);
 
-  const bindSocketHandlers = useCallback(
-    (socket) => {
-      socket.on("connect", () => {
-        setIsRealtimeConnected(true);
-      });
+  const bindSocketHandlers = useCallback((socket) => {
+    socket.on("connect", () => {
+      setIsRealtimeConnected(true);
+    });
 
-      socket.on("disconnect", () => {
-        setIsRealtimeConnected(false);
-      });
+    socket.on("disconnect", () => {
+      setIsRealtimeConnected(false);
+    });
 
-      socket.on("connect_error", (socketError) => {
-        setError(socketError.message || "Failed to connect realtime");
-        setIsRealtimeConnected(false);
-      });
+    socket.on("connect_error", (socketError) => {
+      setError(socketError.message || "Failed to connect realtime");
+      setIsRealtimeConnected(false);
+    });
 
-      socket.on("message:new", ({ conversationId, message }) => {
-        setConversations((prev) =>
-          prev.map((conversation) =>
-            conversation.id === conversationId
-              ? {
-                  ...conversation,
-                  lastMessage: {
-                    id: message.id,
-                    body: message.body,
-                    senderUserId: message.sender_user_id,
-                    createdAt: message.created_at,
-                  },
-                }
-              : conversation,
-          ),
-        );
+    socket.on("message:new", ({ conversationId, message }) => {
+      setConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                lastMessage: {
+                  id: message.id,
+                  body: message.body,
+                  senderUserId: message.sender_user_id,
+                  createdAt: message.created_at,
+                },
+              }
+            : conversation
+        )
+      );
 
-        if (conversationId === selectedConversationIdRef.current) {
-          setMessages((prev) => uniqueMessages([...prev, message]));
+      if (conversationId === selectedConversationIdRef.current) {
+        setMessages((prev) => uniqueMessages([...prev, message]));
+      }
+    });
+
+    socket.on("presence:update", ({ conversationId, userId, isOnline }) => {
+      if (conversationId !== selectedConversationIdRef.current) {
+        return;
+      }
+
+      setPresenceUsers((prev) => {
+        if (isOnline) {
+          return prev.includes(userId) ? prev : [...prev, userId];
         }
+        return prev.filter((value) => value !== userId);
       });
+    });
 
-      socket.on("presence:update", ({ conversationId, userId, isOnline }) => {
-        if (conversationId !== selectedConversationIdRef.current) {
-          return;
+    socket.on("typing:update", ({ conversationId, userId, isTyping }) => {
+      setTypingUsersByConversation((prev) => {
+        const existing = new Set(prev[conversationId] || []);
+        if (isTyping) {
+          existing.add(userId);
+        } else {
+          existing.delete(userId);
         }
-
-        setPresenceUsers((prev) => {
-          if (isOnline) {
-            return prev.includes(userId) ? prev : [...prev, userId];
-          }
-          return prev.filter((value) => value !== userId);
-        });
+        return {
+          ...prev,
+          [conversationId]: Array.from(existing),
+        };
       });
-
-      socket.on("typing:update", ({ conversationId, userId, isTyping }) => {
-        setTypingUsersByConversation((prev) => {
-          const existing = new Set(prev[conversationId] || []);
-          if (isTyping) {
-            existing.add(userId);
-          } else {
-            existing.delete(userId);
-          }
-          return {
-            ...prev,
-            [conversationId]: Array.from(existing),
-          };
-        });
-      });
-    },
-    [],
-  );
+    });
+  }, []);
 
   const connectRealtime = useCallback(async () => {
     setError("");
@@ -343,12 +390,19 @@ export default function ChatsPage() {
     const previousConversationId = joinedConversationRef.current;
 
     async function syncRealtimeRoom() {
-      if (previousConversationId && previousConversationId !== selectedConversationId) {
-        await emitWithAck("conversation:leave", { conversationId: previousConversationId });
+      if (
+        previousConversationId &&
+        previousConversationId !== selectedConversationId
+      ) {
+        await emitWithAck("conversation:leave", {
+          conversationId: previousConversationId,
+        });
       }
 
       if (selectedConversationId) {
-        const response = await emitWithAck("conversation:join", { conversationId: selectedConversationId });
+        const response = await emitWithAck("conversation:join", {
+          conversationId: selectedConversationId,
+        });
         if (response.ok && Array.isArray(response.onlineUserIds)) {
           setPresenceUsers(response.onlineUserIds);
         }
@@ -362,14 +416,19 @@ export default function ChatsPage() {
 
   const sendMessageHttp = useCallback(
     async (conversationId, body) => {
-      const payload = await apiFetch(`/api/messages/conversations/${encodeURIComponent(conversationId)}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ body }),
-      });
+      const payload = await apiFetch(
+        `/api/messages/conversations/${encodeURIComponent(
+          conversationId
+        )}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify({ body }),
+        }
+      );
       setMessages((prev) => uniqueMessages([...prev, payload.message]));
       return payload.message;
     },
-    [apiFetch],
+    [apiFetch]
   );
 
   const handleSendMessage = useCallback(
@@ -385,7 +444,10 @@ export default function ChatsPage() {
 
       try {
         if (isRealtimeConnected) {
-          const response = await emitWithAck("message:send", { conversationId, body });
+          const response = await emitWithAck("message:send", {
+            conversationId,
+            body,
+          });
           if (!response.ok) {
             throw new Error(response.error || "Realtime send failed");
           }
@@ -397,7 +459,9 @@ export default function ChatsPage() {
         setDraftMessage("");
         setTypingUsersByConversation((prev) => ({
           ...prev,
-          [conversationId]: (prev[conversationId] || []).filter((userId) => userId !== session.user?.id),
+          [conversationId]: (prev[conversationId] || []).filter(
+            (userId) => userId !== session.user?.id
+          ),
         }));
 
         if (typingTimeoutRef.current) {
@@ -412,7 +476,14 @@ export default function ChatsPage() {
         setError(sendError.message || "Failed to send message");
       }
     },
-    [draftMessage, selectedConversationId, isRealtimeConnected, emitWithAck, sendMessageHttp, session.user?.id],
+    [
+      draftMessage,
+      selectedConversationId,
+      isRealtimeConnected,
+      emitWithAck,
+      sendMessageHttp,
+      session.user?.id,
+    ]
   );
 
   const handleDraftChange = useCallback(
@@ -434,7 +505,7 @@ export default function ChatsPage() {
         emitWithAck("typing:stop", { conversationId: selectedConversationId });
       }, 1200);
     },
-    [isRealtimeConnected, selectedConversationId, emitWithAck],
+    [isRealtimeConnected, selectedConversationId, emitWithAck]
   );
 
   const handleHideConversation = useCallback((conversationId) => {
@@ -442,7 +513,9 @@ export default function ChatsPage() {
       return;
     }
     setHiddenConversationIds((currentValue) =>
-      currentValue.includes(conversationId) ? currentValue : [...currentValue, conversationId],
+      currentValue.includes(conversationId)
+        ? currentValue
+        : [...currentValue, conversationId]
     );
   }, []);
 
@@ -453,26 +526,40 @@ export default function ChatsPage() {
           <h2>Conversations</h2>
         </div>
 
-        {isLoadingConversations ? <p className="muted">Loading conversations...</p> : null}
+        {isLoadingConversations ? (
+          <p className="muted">Loading conversations...</p>
+        ) : null}
 
         <div className="conversation-list">
           {visibleConversations.map((conversation) => (
             <article className="conversation-item-shell" key={conversation.id}>
               <button
                 type="button"
-                className={conversation.id === selectedConversationId ? "conversation-item active" : "conversation-item"}
+                className={
+                  conversation.id === selectedConversationId
+                    ? "conversation-item active"
+                    : "conversation-item"
+                }
                 onClick={() => setSelectedConversationId(conversation.id)}
               >
                 <div className="conversation-title-row">
                   <strong>{formatConversationLabel(conversation)}</strong>
-                  {conversation.unreadCount > 0 ? <span className="badge solid">{conversation.unreadCount}</span> : null}
+                  {conversation.unreadCount > 0 ? (
+                    <span className="badge solid">
+                      {conversation.unreadCount}
+                    </span>
+                  ) : null}
                 </div>
-                <small>{conversation.lastMessage?.body || "No messages yet"}</small>
+                <small>
+                  {conversation.lastMessage?.body || "No messages yet"}
+                </small>
               </button>
               <button
                 type="button"
                 className="conversation-remove-btn"
-                aria-label={`Remove ${formatConversationLabel(conversation)} from panel`}
+                aria-label={`Remove ${formatConversationLabel(
+                  conversation
+                )} from panel`}
                 onClick={() => handleHideConversation(conversation.id)}
               >
                 Remove
@@ -480,7 +567,9 @@ export default function ChatsPage() {
             </article>
           ))}
           {visibleConversations.length === 0 ? (
-            <p className="muted">Start a conversation with a student or group!</p>
+            <p className="muted">
+              Start a conversation with a student or group!
+            </p>
           ) : null}
         </div>
       </section>
@@ -488,33 +577,56 @@ export default function ChatsPage() {
       <section className="card chat-thread-card">
         <div className="section-heading">
           <h2>Messages</h2>
-          <span className="muted">{selectedConversation ? formatConversationLabel(selectedConversation) : "Select a chat"}</span>
+          {selectedConversation && (
+            <span className="muted">
+              {formatConversationLabel(selectedConversation)}
+            </span>
+          )}
         </div>
 
-        {selectedConversationId ? null : <p className="muted">Select a conversation to read and send messages.</p>}
+        {selectedConversationId ? null : (
+          <p className="muted">
+            Select a conversation to read and send messages.
+          </p>
+        )}
 
         {selectedConversationId ? (
           <>
             <div className="presence-row">
               <strong>Online in this chat:</strong>
-              <span>{presenceUsers.length > 0 ? presenceUsers.join(", ") : "No one currently online"}</span>
+              <span>
+                {presenceUsers.length > 0
+                  ? presenceUsers.join(", ")
+                  : "No one currently online"}
+              </span>
             </div>
 
             {otherTypingUsers.length > 0 ? (
-              <p className="typing-indicator">Typing: {otherTypingUsers.join(", ")}</p>
+              <p className="typing-indicator">
+                Typing: {otherTypingUsers.join(", ")}
+              </p>
             ) : null}
 
             <div className="message-list" role="log" aria-live="polite">
-              {isLoadingMessages ? <p className="muted">Loading messages...</p> : null}
+              {isLoadingMessages ? (
+                <p className="muted">Loading messages...</p>
+              ) : null}
               {messages.map((message) => {
-                const mine = message.sender_user_id === session.user?.id || message.senderUserId === session.user?.id;
+                const mine =
+                  message.sender_user_id === session.user?.id ||
+                  message.senderUserId === session.user?.id;
                 const sender = message.sender_user_id || message.senderUserId;
                 const created = message.created_at || message.createdAt;
                 return (
-                  <article className={mine ? "message-bubble mine" : "message-bubble"} key={message.id}>
+                  <article
+                    className={mine ? "message-bubble mine" : "message-bubble"}
+                    key={message.id}
+                  >
                     <header>
                       <strong>{mine ? "You" : sender}</strong>
-                      <small>{created ? new Date(created).toLocaleTimeString() : ""}</small>
+                      <small>
+                        {created ? new Date(created).toLocaleTimeString() : ""}
+                      </small>
                     </header>
                     <p>{message.body}</p>
                   </article>

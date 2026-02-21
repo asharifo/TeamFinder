@@ -229,7 +229,7 @@ export default function ProfilePage() {
               id="profile-skills-search"
               value={skillQuery}
               onChange={(event) => setSkillQuery(event.target.value)}
-              placeholder="Search university-related skills"
+              placeholder="Search for your skills"
               autoComplete="off"
             />
 

@@ -4,6 +4,8 @@ import { useAuth } from "../auth/AuthContext";
 export default function AuthPage() {
   const { authConfig, authError, login, signup } = useAuth();
   const authReady = Boolean(authConfig?.auth0Configured);
+  const visibleAuthError =
+    authError && !String(authError).toLowerCase().includes("session not found") ? authError : "";
 
   return (
     <div className="centered-page">
@@ -20,7 +22,7 @@ export default function AuthPage() {
           </div>
         )}
 
-        {authError ? <div className="notice error">{authError}</div> : null}
+        {visibleAuthError ? <div className="notice error">{visibleAuthError}</div> : null}
 
         <div className="auth-actions">
           <button className="btn btn-primary" type="button" onClick={login}>
