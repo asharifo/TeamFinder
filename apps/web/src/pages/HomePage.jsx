@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import ClassSectionCard from "../components/ClassSectionCard";
 
@@ -35,6 +35,7 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const accentClasses = ["accent-cyan", "accent-violet", "accent-amber", "accent-emerald"];
+  const searchRequestRef = useRef(0);
 
   const enrolledSet = useMemo(() => new Set(enrollments.map((item) => item.classId)), [enrollments]);
 
@@ -56,28 +57,56 @@ export default function HomePage() {
     loadEnrollments();
   }, [loadEnrollments]);
 
-  const searchClasses = useCallback(async () => {
+  const searchClasses = useCallback(async (queryValue = searchQuery, termValue = searchTerm) => {
+    const requestId = searchRequestRef.current + 1;
+    searchRequestRef.current = requestId;
     setIsSearching(true);
     setError("");
     try {
       const params = new URLSearchParams();
-      if (searchQuery.trim()) {
-        params.set("q", searchQuery.trim());
+      if (queryValue.trim()) {
+        params.set("q", queryValue.trim());
       }
-      if (searchTerm.trim()) {
-        params.set("term", searchTerm.trim());
+      if (termValue.trim()) {
+        params.set("term", termValue.trim());
       }
       params.set("limit", "50");
 
       const payload = await apiFetch(`/api/classes?${params.toString()}`);
       const normalized = (payload.classes || []).map(normalizeClassSection).filter(Boolean);
-      setSearchResults(normalized);
+      if (requestId === searchRequestRef.current) {
+        setSearchResults(normalized);
+      }
     } catch (searchError) {
-      setError(searchError.message || "Class search failed");
+      if (requestId === searchRequestRef.current) {
+        setError(searchError.message || "Class search failed");
+      }
     } finally {
-      setIsSearching(false);
+      if (requestId === searchRequestRef.current) {
+        setIsSearching(false);
+      }
     }
   }, [apiFetch, searchQuery, searchTerm]);
+
+  useEffect(() => {
+    const hasQuery = Boolean(searchQuery.trim());
+    const hasTerm = Boolean(searchTerm.trim());
+
+    if (!hasQuery && !hasTerm) {
+      searchRequestRef.current += 1;
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      searchClasses(searchQuery, searchTerm);
+    }, 220);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [searchClasses, searchQuery, searchTerm]);
 
   const enrollClass = useCallback(
     async (classId) => {
@@ -142,9 +171,7 @@ export default function HomePage() {
             <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="e.g. 2026W" />
           </label>
         </div>
-        <button className="btn btn-primary" type="button" onClick={searchClasses} disabled={isSearching}>
-          {isSearching ? "Searching..." : "Search classes"}
-        </button>
+        {isSearching ? <p className="muted">Searching classes...</p> : null}
 
         <div className="search-results">
           {searchResults.map((item, index) => {
