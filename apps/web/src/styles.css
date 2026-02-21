@@ -723,6 +723,181 @@ small {
   background: linear-gradient(180deg, #50dfbc 0%, #27aa84 100%);
 }
 
+.class-hub {
+  display: grid;
+  gap: 14px;
+  min-height: 72vh;
+}
+
+.class-hub-header {
+  padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(16, 22, 35, 0.96) 0%, rgba(11, 16, 26, 0.96) 100%);
+}
+
+.class-hub-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.class-hub-title-row h2 {
+  margin: 0;
+  font-size: 1.85rem;
+  letter-spacing: -0.02em;
+}
+
+.class-hub-title-row p {
+  margin: 6px 0 0;
+}
+
+.class-hub-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.class-filter-control {
+  margin: 0;
+  min-width: 220px;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.class-filter-control select {
+  min-width: 100%;
+}
+
+.class-tab-nav {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(129, 156, 205, 0.2);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.class-tab-btn {
+  border: 1px solid rgba(73, 94, 130, 0.45);
+  background: rgba(23, 33, 53, 0.8);
+  color: var(--muted);
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 9px 13px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.class-tab-btn:hover {
+  border-color: rgba(110, 144, 205, 0.55);
+  color: #eaf2ff;
+}
+
+.class-tab-btn.active {
+  border-color: rgba(117, 173, 255, 0.75);
+  color: #ffffff;
+  background: rgba(65, 104, 173, 0.42);
+}
+
+.class-hub-header .notice {
+  margin-top: 10px;
+}
+
+.class-hub-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+}
+
+.class-hub-main {
+  min-height: 56vh;
+}
+
+.class-flow-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.class-flow-block {
+  border: 1px solid rgba(69, 86, 117, 0.42);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(14, 20, 31, 0.9) 0%, rgba(11, 17, 27, 0.9) 100%);
+  padding: 14px;
+}
+
+.class-flow-block > h3 {
+  margin: 0 0 10px;
+}
+
+.class-flow-block .section-heading {
+  margin-bottom: 10px;
+}
+
+.class-flow-block .stacked-list,
+.class-flow-block .member-list {
+  margin-top: 0;
+}
+
+.class-hub-context {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.class-hub-context h3,
+.class-hub-context h4 {
+  margin: 0;
+}
+
+.class-context-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.class-context-stat {
+  border: 1px solid rgba(80, 99, 133, 0.45);
+  border-radius: 12px;
+  background: rgba(18, 25, 40, 0.82);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.class-context-stat strong {
+  font-size: 1.1rem;
+}
+
+.class-context-section-meta {
+  border: 1px solid rgba(76, 95, 130, 0.45);
+  border-radius: 12px;
+  background: rgba(20, 28, 43, 0.86);
+  padding: 10px;
+}
+
+.class-context-section-meta p {
+  margin: 6px 0 3px;
+}
+
+.pagination-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pagination-row .muted {
+  font-size: 0.86rem;
+}
+
 @media (max-width: 1260px) {
   .app-shell {
     grid-template-columns: 230px minmax(0, 1fr);
@@ -734,6 +909,10 @@ small {
 
   .dashboard-pane {
     padding: 28px;
+  }
+
+  .class-hub-grid {
+    grid-template-columns: minmax(0, 1fr) 290px;
   }
 }
 
@@ -792,6 +971,19 @@ small {
   .finder-pane {
     border-left: none;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .class-hub-title-row {
+    flex-direction: column;
+  }
+
+  .class-hub-header-actions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .class-hub-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -867,5 +1059,36 @@ small {
 
   .class-section-card {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .class-hub-header {
+    padding: 16px;
+  }
+
+  .class-hub-title-row h2 {
+    font-size: 1.45rem;
+  }
+
+  .class-filter-control {
+    min-width: 100%;
+  }
+
+  .class-tab-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .class-tab-btn {
+    white-space: nowrap;
+  }
+
+  .class-context-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .pagination-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
