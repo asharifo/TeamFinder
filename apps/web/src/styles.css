@@ -528,11 +528,47 @@ small {
   width: 100%;
   text-align: left;
   cursor: pointer;
+  padding-right: 74px;
 }
 
 .conversation-item.active {
   border-color: rgba(109, 165, 255, 0.8);
   background: rgba(52, 82, 130, 0.42);
+}
+
+.conversation-item-shell {
+  position: relative;
+}
+
+.conversation-remove-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: 1px solid rgba(255, 122, 122, 0.65);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(129, 28, 28, 0.9);
+  color: #ffe4e4;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 140ms ease, transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.conversation-item-shell:hover .conversation-remove-btn,
+.conversation-item-shell:focus-within .conversation-remove-btn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.conversation-remove-btn:hover {
+  background: rgba(165, 34, 34, 0.96);
+  border-color: rgba(255, 158, 158, 0.95);
 }
 
 .member-list {

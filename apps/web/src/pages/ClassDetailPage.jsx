@@ -99,21 +99,34 @@ export default function ClassDetailPage() {
   const myUserId = session.user?.id || "";
 
   const myGroups = useMemo(
-    () => groups.filter((group) => normalizeMembers(group.members).includes(myUserId)),
-    [groups, myUserId],
+    () =>
+      groups.filter((group) =>
+        normalizeMembers(group.members).includes(myUserId)
+      ),
+    [groups, myUserId]
   );
 
   const myOwnedGroups = useMemo(
-    () => groups.filter((group) => group.owner_user_id === myUserId || group.ownerUserId === myUserId),
-    [groups, myUserId],
+    () =>
+      groups.filter(
+        (group) =>
+          group.owner_user_id === myUserId || group.ownerUserId === myUserId
+      ),
+    [groups, myUserId]
   );
 
-  const myCreatedGroupsCount = useMemo(() => myOwnedGroups.length, [myOwnedGroups]);
+  const myCreatedGroupsCount = useMemo(
+    () => myOwnedGroups.length,
+    [myOwnedGroups]
+  );
   const reachedCreateLimit = myCreatedGroupsCount >= 5;
 
   const availableGroups = useMemo(
-    () => groups.filter((group) => !normalizeMembers(group.members).includes(myUserId)),
-    [groups, myUserId],
+    () =>
+      groups.filter(
+        (group) => !normalizeMembers(group.members).includes(myUserId)
+      ),
+    [groups, myUserId]
   );
 
   const reviewRequests = useMemo(() => {
@@ -140,29 +153,36 @@ export default function ClassDetailPage() {
   }, [myOwnedGroups, pendingRequestsByGroup]);
 
   const availableGroupsPagination = useMemo(
-    () => paginateItems(availableGroups, availableGroupsPage, PAGE_SIZE.availableGroups),
-    [availableGroups, availableGroupsPage],
+    () =>
+      paginateItems(
+        availableGroups,
+        availableGroupsPage,
+        PAGE_SIZE.availableGroups
+      ),
+    [availableGroups, availableGroupsPage]
   );
 
   const myGroupsPagination = useMemo(
     () => paginateItems(myGroups, myGroupsPage, PAGE_SIZE.myGroups),
-    [myGroups, myGroupsPage],
+    [myGroups, myGroupsPage]
   );
 
   const requestsPagination = useMemo(
     () => paginateItems(reviewRequests, requestPage, PAGE_SIZE.requests),
-    [reviewRequests, requestPage],
+    [reviewRequests, requestPage]
   );
 
   const studentsPagination = useMemo(
     () => paginateItems(members, studentsPage, PAGE_SIZE.students),
-    [members, studentsPage],
+    [members, studentsPage]
   );
 
   const loadOwnerRequests = useCallback(
     async (nextGroups) => {
       const ownedGroupIds = nextGroups
-        .filter((group) => (group.owner_user_id || group.ownerUserId) === myUserId)
+        .filter(
+          (group) => (group.owner_user_id || group.ownerUserId) === myUserId
+        )
         .map((group) => group.id);
 
       if (ownedGroupIds.length === 0) {
@@ -173,17 +193,21 @@ export default function ClassDetailPage() {
       const entries = await Promise.all(
         ownedGroupIds.map(async (groupId) => {
           try {
-            const payload = await apiFetch(`/api/classes/groups/${encodeURIComponent(groupId)}/requests?status=PENDING`);
+            const payload = await apiFetch(
+              `/api/classes/groups/${encodeURIComponent(
+                groupId
+              )}/requests?status=PENDING`
+            );
             return [groupId, normalizeRequests(payload.requests)];
           } catch (_error) {
             return [groupId, []];
           }
-        }),
+        })
       );
 
       setPendingRequestsByGroup(Object.fromEntries(entries));
     },
-    [apiFetch, myUserId],
+    [apiFetch, myUserId]
   );
 
   const loadClassData = useCallback(async () => {
@@ -197,7 +221,9 @@ export default function ClassDetailPage() {
       ]);
 
       const nextGroups = groupsPayload.groups || [];
-      setClassMeta(membersPayload.class || { id: classId, title: classId, term: "" });
+      setClassMeta(
+        membersPayload.class || { id: classId, title: classId, term: "" }
+      );
       setMembers(membersPayload.members || []);
       setGroups(nextGroups);
       await loadOwnerRequests(nextGroups);
@@ -225,12 +251,15 @@ export default function ClassDetailPage() {
       setInfo("");
 
       try {
-        const payload = await apiFetch(`/api/classes/${encodeURIComponent(classId)}/groups`, {
-          method: "POST",
-          body: JSON.stringify({
-            name: newGroupName,
-          }),
-        });
+        const payload = await apiFetch(
+          `/api/classes/${encodeURIComponent(classId)}/groups`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name: newGroupName,
+            }),
+          }
+        );
 
         setInfo(`Created group ${payload.group.name}`);
         setNewGroupName("");
@@ -242,7 +271,7 @@ export default function ClassDetailPage() {
         setIsSubmitting(false);
       }
     },
-    [apiFetch, classId, loadClassData, newGroupName, reachedCreateLimit],
+    [apiFetch, classId, loadClassData, newGroupName, reachedCreateLimit]
   );
 
   const requestJoin = useCallback(
@@ -251,17 +280,20 @@ export default function ClassDetailPage() {
       setInfo("");
 
       try {
-        await apiFetch(`/api/classes/groups/${encodeURIComponent(groupId)}/requests`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
+        await apiFetch(
+          `/api/classes/groups/${encodeURIComponent(groupId)}/requests`,
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+          }
+        );
         setInfo("Join request submitted");
         await loadClassData();
       } catch (requestError) {
         setError(requestError.message || "Failed to request group join");
       }
     },
-    [apiFetch, loadClassData],
+    [apiFetch, loadClassData]
   );
 
   const approveRequest = useCallback(
@@ -271,11 +303,13 @@ export default function ClassDetailPage() {
 
       try {
         await apiFetch(
-          `/api/classes/groups/${encodeURIComponent(groupId)}/requests/${encodeURIComponent(userId)}/approve`,
+          `/api/classes/groups/${encodeURIComponent(
+            groupId
+          )}/requests/${encodeURIComponent(userId)}/approve`,
           {
             method: "POST",
             body: JSON.stringify({}),
-          },
+          }
         );
         setInfo(`Approved request from ${userId}`);
         await loadClassData();
@@ -283,7 +317,7 @@ export default function ClassDetailPage() {
         setError(approveError.message || "Failed to approve request");
       }
     },
-    [apiFetch, loadClassData],
+    [apiFetch, loadClassData]
   );
 
   const rejectRequest = useCallback(
@@ -293,11 +327,13 @@ export default function ClassDetailPage() {
 
       try {
         await apiFetch(
-          `/api/classes/groups/${encodeURIComponent(groupId)}/requests/${encodeURIComponent(userId)}/reject`,
+          `/api/classes/groups/${encodeURIComponent(
+            groupId
+          )}/requests/${encodeURIComponent(userId)}/reject`,
           {
             method: "POST",
             body: JSON.stringify({}),
-          },
+          }
         );
         setInfo(`Rejected request from ${userId}`);
         await loadClassData();
@@ -305,7 +341,7 @@ export default function ClassDetailPage() {
         setError(rejectError.message || "Failed to reject request");
       }
     },
-    [apiFetch, loadClassData],
+    [apiFetch, loadClassData]
   );
 
   const leaveGroup = useCallback(
@@ -314,17 +350,20 @@ export default function ClassDetailPage() {
       setInfo("");
 
       try {
-        const payload = await apiFetch(`/api/classes/groups/${encodeURIComponent(groupId)}/leave`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
+        const payload = await apiFetch(
+          `/api/classes/groups/${encodeURIComponent(groupId)}/leave`,
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+          }
+        );
         setInfo(payload.disbanded ? "Group disbanded" : "You left the group");
         await loadClassData();
       } catch (leaveError) {
         setError(leaveError.message || "Failed to leave group");
       }
     },
-    [apiFetch, loadClassData],
+    [apiFetch, loadClassData]
   );
 
   const disbandGroup = useCallback(
@@ -342,20 +381,24 @@ export default function ClassDetailPage() {
         setError(deleteError.message || "Failed to disband group");
       }
     },
-    [apiFetch, loadClassData],
+    [apiFetch, loadClassData]
   );
 
   const openGroupChat = useCallback(
     async (groupId) => {
       setError("");
       try {
-        const payload = await apiFetch(`/api/messages/conversations/group/${encodeURIComponent(groupId)}`);
-        navigate(`/chats?conversation=${encodeURIComponent(payload.conversation.id)}`);
+        const payload = await apiFetch(
+          `/api/messages/conversations/group/${encodeURIComponent(groupId)}`
+        );
+        navigate(
+          `/chats?conversation=${encodeURIComponent(payload.conversation.id)}`
+        );
       } catch (chatError) {
         setError(chatError.message || "Unable to open group chat");
       }
     },
-    [apiFetch, navigate],
+    [apiFetch, navigate]
   );
 
   function renderFindGroupTab() {
@@ -367,11 +410,15 @@ export default function ClassDetailPage() {
             <span className="muted">{availableGroups.length} groups</span>
           </div>
 
-          {availableGroups.length === 0 ? <p className="muted">No available groups yet.</p> : null}
+          {availableGroups.length === 0 ? (
+            <p className="muted">No available groups yet.</p>
+          ) : null}
 
           <div className="stacked-list">
             {availableGroupsPagination.items.map((group) => {
-              const full = Number(group.member_count || 0) >= Number(group.max_group_size || 0);
+              const full =
+                Number(group.member_count || 0) >=
+                Number(group.max_group_size || 0);
               return (
                 <article className="result-item" key={group.id}>
                   <div>
@@ -380,7 +427,12 @@ export default function ClassDetailPage() {
                       Members: {group.member_count}/{group.max_group_size}
                     </small>
                   </div>
-                  <button className="btn btn-secondary" type="button" disabled={full} onClick={() => requestJoin(group.id)}>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    disabled={full}
+                    onClick={() => requestJoin(group.id)}
+                  >
                     {full ? "Full" : "Request Join"}
                   </button>
                 </article>
@@ -388,7 +440,10 @@ export default function ClassDetailPage() {
             })}
           </div>
 
-          <PaginationControls pagination={availableGroupsPagination} onPageChange={setAvailableGroupsPage} />
+          <PaginationControls
+            pagination={availableGroupsPagination}
+            onPageChange={setAvailableGroupsPage}
+          />
         </section>
       </div>
     );
@@ -400,14 +455,19 @@ export default function ClassDetailPage() {
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>My Groups</h3>
-            <span className="muted">{myGroups.length} groups</span>
+            <span className="muted">
+              {myGroups.length} {myGroups.length === 1 ? "group" : "groups"}
+            </span>
           </div>
 
-          {myGroups.length === 0 ? <p className="muted">You are not in any groups yet.</p> : null}
+          {myGroups.length === 0 ? (
+            <p className="muted">You are not in any groups yet.</p>
+          ) : null}
 
           <div className="stacked-list">
             {myGroupsPagination.items.map((group) => {
-              const isOwner = (group.owner_user_id || group.ownerUserId) === myUserId;
+              const isOwner =
+                (group.owner_user_id || group.ownerUserId) === myUserId;
               return (
                 <article className="result-item" key={group.id}>
                   <div>
@@ -418,15 +478,27 @@ export default function ClassDetailPage() {
                     </small>
                   </div>
                   <div className="inline-actions">
-                    <button className="btn btn-secondary" type="button" onClick={() => openGroupChat(group.id)}>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={() => openGroupChat(group.id)}
+                    >
                       Open Chat
                     </button>
                     {isOwner ? (
-                      <button className="btn btn-ghost" type="button" onClick={() => disbandGroup(group.id)}>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => disbandGroup(group.id)}
+                      >
                         Disband
                       </button>
                     ) : (
-                      <button className="btn btn-ghost" type="button" onClick={() => leaveGroup(group.id)}>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => leaveGroup(group.id)}
+                      >
                         Leave
                       </button>
                     )}
@@ -436,7 +508,10 @@ export default function ClassDetailPage() {
             })}
           </div>
 
-          <PaginationControls pagination={myGroupsPagination} onPageChange={setMyGroupsPage} />
+          <PaginationControls
+            pagination={myGroupsPagination}
+            onPageChange={setMyGroupsPage}
+          />
         </section>
 
         <section className="class-flow-block">
@@ -445,29 +520,42 @@ export default function ClassDetailPage() {
             <span className="muted">{reviewRequests.length} pending</span>
           </div>
 
-          {myOwnedGroups.length === 0 ? <p className="muted">You do not own any groups in this class.</p> : null}
-          {myOwnedGroups.length > 0 && reviewRequests.length === 0 ? <p className="muted">No pending requests.</p> : null}
+          {myOwnedGroups.length === 0 ? (
+            <p className="muted">You do not own any groups in this class.</p>
+          ) : null}
+          {myOwnedGroups.length > 0 && reviewRequests.length === 0 ? (
+            <p className="muted">No pending requests.</p>
+          ) : null}
 
           <div className="stacked-list">
             {requestsPagination.items.map((requestItem) => (
-              <article className="result-item" key={`${requestItem.groupId}-${requestItem.user_id}`}>
+              <article
+                className="result-item"
+                key={`${requestItem.groupId}-${requestItem.user_id}`}
+              >
                 <div>
                   <h4>{requestItem.user_id}</h4>
                   <p>Group: {requestItem.groupName}</p>
-                  <small>Requested {formatDateTime(requestItem.created_at)}</small>
+                  <small>
+                    Requested {formatDateTime(requestItem.created_at)}
+                  </small>
                 </div>
                 <div className="inline-actions">
                   <button
                     className="btn btn-primary"
                     type="button"
-                    onClick={() => approveRequest(requestItem.groupId, requestItem.user_id)}
+                    onClick={() =>
+                      approveRequest(requestItem.groupId, requestItem.user_id)
+                    }
                   >
                     Approve
                   </button>
                   <button
                     className="btn btn-ghost"
                     type="button"
-                    onClick={() => rejectRequest(requestItem.groupId, requestItem.user_id)}
+                    onClick={() =>
+                      rejectRequest(requestItem.groupId, requestItem.user_id)
+                    }
                   >
                     Reject
                   </button>
@@ -476,7 +564,10 @@ export default function ClassDetailPage() {
             ))}
           </div>
 
-          <PaginationControls pagination={requestsPagination} onPageChange={setRequestPage} />
+          <PaginationControls
+            pagination={requestsPagination}
+            onPageChange={setRequestPage}
+          />
         </section>
       </div>
     );
@@ -488,17 +579,25 @@ export default function ClassDetailPage() {
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>Create Group</h3>
-            <span className="muted">
-              Created {myCreatedGroupsCount}/5
-            </span>
+            <span className="muted">Created {myCreatedGroupsCount}/5</span>
           </div>
-          <p className="muted">Each student can create up to 5 groups in this class.</p>
+          <p className="muted">
+            Each student can create up to 5 groups in this class.
+          </p>
           <form className="form-grid" onSubmit={createGroup}>
             <label>
               Group name
-              <input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} required />
+              <input
+                value={newGroupName}
+                onChange={(event) => setNewGroupName(event.target.value)}
+                required
+              />
             </label>
-            <button className="btn btn-primary" type="submit" disabled={isSubmitting || reachedCreateLimit}>
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={isSubmitting || reachedCreateLimit}
+            >
               {reachedCreateLimit ? "Limit Reached" : "Create Group"}
             </button>
           </form>
@@ -513,10 +612,14 @@ export default function ClassDetailPage() {
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>Students in Class</h3>
-            <span className="muted">{members.length} students</span>
+            <span className="muted">
+              {members.length} {members.length === 1 ? "student" : "students"}
+            </span>
           </div>
 
-          {members.length === 0 ? <p className="muted">No students are enrolled yet.</p> : null}
+          {members.length === 0 ? (
+            <p className="muted">No students are enrolled yet.</p>
+          ) : null}
 
           <ul className="member-list">
             {studentsPagination.items.map((member) => {
@@ -532,7 +635,10 @@ export default function ClassDetailPage() {
             })}
           </ul>
 
-          <PaginationControls pagination={studentsPagination} onPageChange={setStudentsPage} />
+          <PaginationControls
+            pagination={studentsPagination}
+            onPageChange={setStudentsPage}
+          />
         </section>
       </div>
     );
@@ -572,7 +678,9 @@ export default function ClassDetailPage() {
             <button
               key={tab.id}
               type="button"
-              className={activeTab === tab.id ? "class-tab-btn active" : "class-tab-btn"}
+              className={
+                activeTab === tab.id ? "class-tab-btn active" : "class-tab-btn"
+              }
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}

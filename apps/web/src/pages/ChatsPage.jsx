@@ -3,6 +3,36 @@ import { io } from "socket.io-client";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
+function loadHiddenConversationIds(storageKey) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    const parsed = JSON.parse(raw || "[]");
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((value) => String(value)).filter(Boolean);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveHiddenConversationIds(storageKey, conversationIds) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const uniqueIds = Array.from(new Set((conversationIds || []).map((value) => String(value)).filter(Boolean)));
+    window.localStorage.setItem(storageKey, JSON.stringify(uniqueIds));
+  } catch (_error) {
+    // Ignore localStorage persistence errors.
+  }
+}
+
 function formatConversationLabel(conversation) {
   if (conversation.type === "DM") {
     return `DM (${conversation.members.join(", ")})`;
@@ -42,6 +72,7 @@ export default function ChatsPage() {
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [hiddenConversationIds, setHiddenConversationIds] = useState([]);
   const [error, setError] = useState("");
 
   const socketRef = useRef(null);
@@ -49,15 +80,35 @@ export default function ChatsPage() {
   const typingTimeoutRef = useRef(null);
   const selectedConversationIdRef = useRef("");
 
-  const selectedConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === selectedConversationId) || null,
-    [conversations, selectedConversationId],
-  );
-
   const preselectedConversationId = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get("conversation") || "";
   }, [location.search]);
+
+  const hiddenConversationsStorageKey = useMemo(
+    () => `teamfinder:hidden-conversations:${session.user?.id || "anonymous"}`,
+    [session.user?.id],
+  );
+
+  useEffect(() => {
+    setHiddenConversationIds(loadHiddenConversationIds(hiddenConversationsStorageKey));
+  }, [hiddenConversationsStorageKey]);
+
+  useEffect(() => {
+    saveHiddenConversationIds(hiddenConversationsStorageKey, hiddenConversationIds);
+  }, [hiddenConversationsStorageKey, hiddenConversationIds]);
+
+  const hiddenConversationSet = useMemo(() => new Set(hiddenConversationIds), [hiddenConversationIds]);
+
+  const visibleConversations = useMemo(
+    () => conversations.filter((conversation) => !hiddenConversationSet.has(conversation.id)),
+    [conversations, hiddenConversationSet],
+  );
+
+  const selectedConversation = useMemo(
+    () => visibleConversations.find((conversation) => conversation.id === selectedConversationId) || null,
+    [visibleConversations, selectedConversationId],
+  );
 
   const typingUsers = useMemo(() => {
     return typingUsersByConversation[selectedConversationId] || [];
@@ -74,16 +125,11 @@ export default function ChatsPage() {
       const payload = await apiFetch("/api/messages/conversations?limit=100");
       const nextConversations = payload.conversations || [];
       setConversations(nextConversations);
-
-      setSelectedConversationId((currentValue) => {
-        if (preselectedConversationId && nextConversations.some((item) => item.id === preselectedConversationId)) {
-          return preselectedConversationId;
-        }
-        if (currentValue && nextConversations.some((item) => item.id === currentValue)) {
-          return currentValue;
-        }
-        return nextConversations.length > 0 ? nextConversations[0].id : "";
-      });
+      if (preselectedConversationId && nextConversations.some((item) => item.id === preselectedConversationId)) {
+        setHiddenConversationIds((currentValue) =>
+          currentValue.filter((conversationId) => conversationId !== preselectedConversationId),
+        );
+      }
     } catch (fetchError) {
       setError(fetchError.message || "Failed to load conversations");
     } finally {
@@ -138,6 +184,18 @@ export default function ChatsPage() {
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    setSelectedConversationId((currentValue) => {
+      if (preselectedConversationId && visibleConversations.some((item) => item.id === preselectedConversationId)) {
+        return preselectedConversationId;
+      }
+      if (currentValue && visibleConversations.some((item) => item.id === currentValue)) {
+        return currentValue;
+      }
+      return visibleConversations.length > 0 ? visibleConversations[0].id : "";
+    });
+  }, [preselectedConversationId, visibleConversations]);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
@@ -379,6 +437,15 @@ export default function ChatsPage() {
     [isRealtimeConnected, selectedConversationId, emitWithAck],
   );
 
+  const handleHideConversation = useCallback((conversationId) => {
+    if (!conversationId) {
+      return;
+    }
+    setHiddenConversationIds((currentValue) =>
+      currentValue.includes(conversationId) ? currentValue : [...currentValue, conversationId],
+    );
+  }, []);
+
   return (
     <div className="page-grid chats-grid">
       <section className="card">
@@ -389,20 +456,32 @@ export default function ChatsPage() {
         {isLoadingConversations ? <p className="muted">Loading conversations...</p> : null}
 
         <div className="conversation-list">
-          {conversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={conversation.id === selectedConversationId ? "conversation-item active" : "conversation-item"}
-              onClick={() => setSelectedConversationId(conversation.id)}
-            >
-              <div className="conversation-title-row">
-                <strong>{formatConversationLabel(conversation)}</strong>
-                {conversation.unreadCount > 0 ? <span className="badge solid">{conversation.unreadCount}</span> : null}
-              </div>
-              <small>{conversation.lastMessage?.body || "No messages yet"}</small>
-            </button>
+          {visibleConversations.map((conversation) => (
+            <article className="conversation-item-shell" key={conversation.id}>
+              <button
+                type="button"
+                className={conversation.id === selectedConversationId ? "conversation-item active" : "conversation-item"}
+                onClick={() => setSelectedConversationId(conversation.id)}
+              >
+                <div className="conversation-title-row">
+                  <strong>{formatConversationLabel(conversation)}</strong>
+                  {conversation.unreadCount > 0 ? <span className="badge solid">{conversation.unreadCount}</span> : null}
+                </div>
+                <small>{conversation.lastMessage?.body || "No messages yet"}</small>
+              </button>
+              <button
+                type="button"
+                className="conversation-remove-btn"
+                aria-label={`Remove ${formatConversationLabel(conversation)} from panel`}
+                onClick={() => handleHideConversation(conversation.id)}
+              >
+                Remove
+              </button>
+            </article>
           ))}
+          {visibleConversations.length === 0 ? (
+            <p className="muted">Start a conversation with a student or group!.</p>
+          ) : null}
         </div>
       </section>
 
