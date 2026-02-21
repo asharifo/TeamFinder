@@ -44,11 +44,11 @@ export default function ChatsPage() {
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
 
   const socketRef = useRef(null);
   const joinedConversationRef = useRef("");
   const typingTimeoutRef = useRef(null);
+  const selectedConversationIdRef = useRef("");
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId) || null,
@@ -141,6 +141,10 @@ export default function ChatsPage() {
   }, [loadConversations]);
 
   useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
     if (!selectedConversationId) {
       setMessages([]);
       setPresenceUsers([]);
@@ -167,7 +171,6 @@ export default function ChatsPage() {
     (socket) => {
       socket.on("connect", () => {
         setIsRealtimeConnected(true);
-        setInfo("Realtime connected");
       });
 
       socket.on("disconnect", () => {
@@ -196,13 +199,13 @@ export default function ChatsPage() {
           ),
         );
 
-        if (conversationId === selectedConversationId) {
+        if (conversationId === selectedConversationIdRef.current) {
           setMessages((prev) => uniqueMessages([...prev, message]));
         }
       });
 
       socket.on("presence:update", ({ conversationId, userId, isOnline }) => {
-        if (conversationId !== selectedConversationId) {
+        if (conversationId !== selectedConversationIdRef.current) {
           return;
         }
 
@@ -229,14 +232,13 @@ export default function ChatsPage() {
         });
       });
     },
-    [selectedConversationId],
+    [],
   );
 
   const connectRealtime = useCallback(async () => {
     setError("");
 
     if (socketRef.current && socketRef.current.connected) {
-      setInfo("Realtime already connected");
       return;
     }
 
@@ -258,14 +260,9 @@ export default function ChatsPage() {
     socketRef.current = socket;
   }, [bindSocketHandlers, getValidAccessToken]);
 
-  const disconnectRealtime = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-      setIsRealtimeConnected(false);
-      setInfo("Realtime disconnected");
-    }
-  }, []);
+  useEffect(() => {
+    connectRealtime();
+  }, [connectRealtime]);
 
   const emitWithAck = useCallback((eventName, payload) => {
     return new Promise((resolve) => {
@@ -310,7 +307,6 @@ export default function ChatsPage() {
     async (event) => {
       event.preventDefault();
       setError("");
-      setInfo("");
 
       const otherUserId = newConversationOtherUserId.trim();
       if (!otherUserId) {
@@ -326,7 +322,6 @@ export default function ChatsPage() {
           }),
         });
 
-        setInfo(payload.created ? `Conversation ${payload.conversation.id} created` : `Conversation ${payload.conversation.id} opened`);
         setNewConversationOtherUserId("");
         await loadConversations();
         setSelectedConversationId(payload.conversation.id);
@@ -419,21 +414,6 @@ export default function ChatsPage() {
       <section className="card">
         <div className="section-heading">
           <h2>Conversations</h2>
-          <button className="btn btn-ghost" type="button" onClick={loadConversations}>
-            Refresh
-          </button>
-        </div>
-
-        <div className="inline-actions">
-          <button className="btn btn-primary" type="button" onClick={connectRealtime}>
-            Connect Realtime
-          </button>
-          <button className="btn btn-secondary" type="button" onClick={disconnectRealtime}>
-            Disconnect
-          </button>
-          <span className={isRealtimeConnected ? "status-dot online" : "status-dot"}>
-            {isRealtimeConnected ? "Realtime connected" : "Realtime offline"}
-          </span>
         </div>
 
         {isLoadingConversations ? <p className="muted">Loading conversations...</p> : null}
@@ -523,7 +503,6 @@ export default function ChatsPage() {
           </>
         ) : null}
 
-        {info ? <p className="notice success">{info}</p> : null}
         {error ? <p className="notice error">{error}</p> : null}
       </section>
     </div>

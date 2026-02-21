@@ -315,9 +315,6 @@ export default function ClassDetailPage() {
             {classMeta?.id || classId} {classMeta?.title ? `- ${classMeta.title}` : ""}
           </h2>
           <div className="inline-actions">
-            <button className="btn btn-ghost" type="button" onClick={loadClassData}>
-              Refresh
-            </button>
             <Link className="btn btn-ghost" to="/">
               Back to homepage
             </Link>

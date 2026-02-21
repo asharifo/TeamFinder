@@ -3,7 +3,7 @@ const cors = require("@fastify/cors");
 const { Pool } = require("pg");
 const { Kafka } = require("kafkajs");
 const { randomUUID } = require("crypto");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const app = fastify({
@@ -76,6 +76,46 @@ function extensionFromContentType(contentType) {
     return "gif";
   }
   return "jpg";
+}
+
+function resolveObjectKey(profilePictureUrl) {
+  const normalized = String(profilePictureUrl || "").trim();
+  if (!normalized || !bucketName) {
+    return "";
+  }
+
+  const prefix = `s3://${bucketName}/`;
+  if (!normalized.startsWith(prefix)) {
+    return "";
+  }
+
+  return normalized.slice(prefix.length).trim();
+}
+
+async function buildProfilePictureViewUrl(profilePictureUrl) {
+  const normalized = String(profilePictureUrl || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return normalized;
+  }
+
+  const objectKey = resolveObjectKey(normalized);
+  if (!objectKey || !s3Enabled || !s3PresignClient) {
+    return "";
+  }
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+    });
+    return await getSignedUrl(s3PresignClient, command, { expiresIn: 3600 });
+  } catch (_error) {
+    return "";
+  }
 }
 
 async function connectProducer() {
@@ -168,7 +208,15 @@ app.get("/:userId", async (request, reply) => {
     return reply.code(404).send({ error: "profile not found" });
   }
 
-  return reply.send({ profile: result.rows[0] });
+  const profile = result.rows[0];
+  const profilePictureViewUrl = await buildProfilePictureViewUrl(profile.profile_picture_url);
+
+  return reply.send({
+    profile: {
+      ...profile,
+      profile_picture_view_url: profilePictureViewUrl,
+    },
+  });
 });
 
 app.put("/:userId", async (request, reply) => {
@@ -200,6 +248,7 @@ app.put("/:userId", async (request, reply) => {
     );
 
     const profile = result.rows[0];
+    const profilePictureViewUrl = await buildProfilePictureViewUrl(profile.profile_picture_url);
 
     await publish("profile.updated", {
       userId: profile.user_id,
@@ -208,7 +257,12 @@ app.put("/:userId", async (request, reply) => {
       classes: profile.classes,
     });
 
-    return reply.send({ profile });
+    return reply.send({
+      profile: {
+        ...profile,
+        profile_picture_view_url: profilePictureViewUrl,
+      },
+    });
   } catch (error) {
     request.log.error({ error }, "failed to upsert profile");
     return reply.code(500).send({ error: "internal error" });
@@ -274,8 +328,12 @@ app.post("/:userId/picture/confirm", async (request, reply) => {
       [userId, profilePictureUrl],
     );
 
+    const savedPictureUrl = result.rows[0].profile_picture_url;
+    const profilePictureViewUrl = await buildProfilePictureViewUrl(savedPictureUrl);
+
     return reply.send({
-      profilePictureUrl: result.rows[0].profile_picture_url,
+      profilePictureUrl: savedPictureUrl,
+      profilePictureViewUrl,
       updatedAt: result.rows[0].updated_at,
     });
   } catch (error) {

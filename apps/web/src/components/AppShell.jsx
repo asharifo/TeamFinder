@@ -1,11 +1,12 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 export default function AppShell({ children }) {
-  const { session, logout } = useAuth();
+  const { session, apiFetch, logout } = useAuth();
   const displayName = session.user?.name || session.user?.email?.split("@")[0] || "Member";
   const displayEmail = session.user?.email || session.user?.id || "Signed in";
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -13,14 +14,72 @@ export default function AppShell({ children }) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  const userId = session.user?.id || "";
+  const avatarUrl = profileAvatarUrl || session.user?.picture || "";
+
+  const loadProfileAvatar = useCallback(async () => {
+    if (!userId) {
+      setProfileAvatarUrl("");
+      return;
+    }
+
+    try {
+      const payload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`);
+      const profile = payload.profile || {};
+      const signedViewUrl = String(profile.profile_picture_view_url || "").trim();
+      const externalUrl = String(profile.profile_picture_url || "").trim();
+
+      if (signedViewUrl) {
+        setProfileAvatarUrl(signedViewUrl);
+        return;
+      }
+
+      if (externalUrl.startsWith("http://") || externalUrl.startsWith("https://")) {
+        setProfileAvatarUrl(externalUrl);
+        return;
+      }
+
+      setProfileAvatarUrl("");
+    } catch (error) {
+      if (error?.status === 404) {
+        setProfileAvatarUrl("");
+      }
+    }
+  }, [apiFetch, userId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function run() {
+      if (!isMounted) {
+        return;
+      }
+      await loadProfileAvatar();
+    }
+
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [loadProfileAvatar]);
+
+  useEffect(() => {
+    function handleProfileUpdated() {
+      loadProfileAvatar();
+    }
+
+    window.addEventListener("teamfinder:profile-updated", handleProfileUpdated);
+    return () => {
+      window.removeEventListener("teamfinder:profile-updated", handleProfileUpdated);
+    };
+  }, [loadProfileAvatar]);
 
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="sidebar-profile">
           <div className="profile-avatar" aria-hidden="true">
-            {session.user?.picture ? (
-              <img src={session.user.picture} alt="" />
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" />
             ) : (
               <span>{initials || "TF"}</span>
             )}

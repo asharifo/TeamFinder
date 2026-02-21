@@ -79,9 +79,6 @@ export default function HomePage() {
       <section className="dashboard-pane classes-pane">
         <div className="section-heading dashboard-heading">
           <h2>Classes</h2>
-          <button className="btn btn-ghost" type="button" onClick={loadEnrollments}>
-            Refresh
-          </button>
         </div>
 
         {isLoadingEnrollments ? <p className="muted">Loading classes...</p> : null}

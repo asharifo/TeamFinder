@@ -26,6 +26,7 @@ export default function ProfilePage() {
     profilePictureUrl: "",
   });
   const [file, setFile] = useState(null);
+  const [profilePicturePreviewUrl, setProfilePicturePreviewUrl] = useState("");
   const [recommendations, setRecommendations] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,9 +35,12 @@ export default function ProfilePage() {
 
   const userId = session.user?.id || "";
 
-  const hasExternalPreview = useMemo(() => {
-    return form.profilePictureUrl.startsWith("http://") || form.profilePictureUrl.startsWith("https://");
-  }, [form.profilePictureUrl]);
+  const previewImageUrl = useMemo(() => {
+    if (form.profilePictureUrl.startsWith("http://") || form.profilePictureUrl.startsWith("https://")) {
+      return form.profilePictureUrl;
+    }
+    return profilePicturePreviewUrl;
+  }, [form.profilePictureUrl, profilePicturePreviewUrl]);
 
   const loadProfile = useCallback(async () => {
     if (!userId) {
@@ -56,6 +60,7 @@ export default function ProfilePage() {
         availability: profile.availability || "",
         profilePictureUrl: profile.profile_picture_url || "",
       });
+      setProfilePicturePreviewUrl(profile.profile_picture_view_url || "");
     } catch (profileError) {
       if (profileError.status === 404) {
         setForm({
@@ -65,6 +70,7 @@ export default function ProfilePage() {
           availability: "",
           profilePictureUrl: "",
         });
+        setProfilePicturePreviewUrl("");
       } else {
         setError(profileError.message || "Failed to load profile");
       }
@@ -103,7 +109,7 @@ export default function ProfilePage() {
       setInfo("");
 
       try {
-        await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`, {
+        const payload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`, {
           method: "PUT",
           body: JSON.stringify({
             about: form.about,
@@ -114,6 +120,9 @@ export default function ProfilePage() {
           }),
         });
 
+        const savedProfile = payload.profile || {};
+        setProfilePicturePreviewUrl(savedProfile.profile_picture_view_url || "");
+        window.dispatchEvent(new Event("teamfinder:profile-updated"));
         setInfo("Profile saved");
       } catch (saveError) {
         setError(saveError.message || "Failed to save profile");
@@ -157,6 +166,8 @@ export default function ProfilePage() {
       });
 
       updateFormField("profilePictureUrl", confirmPayload.profilePictureUrl || "");
+      setProfilePicturePreviewUrl(confirmPayload.profilePictureViewUrl || "");
+      window.dispatchEvent(new Event("teamfinder:profile-updated"));
       setInfo("Profile image uploaded");
       setFile(null);
     } catch (uploadError) {
@@ -169,9 +180,6 @@ export default function ProfilePage() {
       <section className="card">
         <div className="section-heading">
           <h2>Profile</h2>
-          <button className="btn btn-ghost" type="button" onClick={loadProfile}>
-            Reload
-          </button>
         </div>
 
         {isLoading ? <p className="muted">Loading profile...</p> : null}
@@ -238,7 +246,7 @@ export default function ProfilePage() {
           </button>
         </div>
 
-        {hasExternalPreview ? <img src={form.profilePictureUrl} alt="Profile" className="profile-preview" /> : null}
+        {previewImageUrl ? <img src={previewImageUrl} alt="Profile" className="profile-preview" /> : null}
 
         {info ? <p className="notice success">{info}</p> : null}
         {error ? <p className="notice error">{error}</p> : null}
@@ -247,9 +255,6 @@ export default function ProfilePage() {
       <section className="card">
         <div className="section-heading">
           <h2>Recommended Students</h2>
-          <button className="btn btn-ghost" type="button" onClick={loadRecommendations}>
-            Refresh
-          </button>
         </div>
 
         {recommendations.length === 0 ? <p className="muted">No recommendations yet.</p> : null}
