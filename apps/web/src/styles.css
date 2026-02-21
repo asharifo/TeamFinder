@@ -440,6 +440,35 @@ textarea {
   min-width: 0;
 }
 
+.class-section-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.class-section-main {
+  min-width: 0;
+}
+
+.class-section-main h3 {
+  margin: 0;
+}
+
+.class-section-main p {
+  margin: 4px 0;
+}
+
+.class-section-main small {
+  display: block;
+  margin-top: 2px;
+}
+
+.class-section-action {
+  display: flex;
+  align-items: center;
+}
+
 .class-card:hover,
 .result-item:hover,
 .conversation-item:hover,
@@ -451,20 +480,20 @@ textarea {
 .class-card h3,
 .result-item h3,
 .result-item h4,
-.enrollment-row-main h3 {
+.class-section-main h3 {
   margin: 0;
   color: #f5f8ff;
 }
 
 .class-card p,
 .result-item p,
-.enrollment-row-main p {
+.class-section-main p {
   margin: 4px 0;
 }
 
 .class-card small,
 .result-item small,
-.enrollment-row-main small,
+.class-section-main small,
 .muted,
 small {
   color: var(--soft);
@@ -658,14 +687,10 @@ small {
 }
 
 .enrollment-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 14px;
   padding: 13px 14px;
 }
 
-.enrollment-row-main h3 {
+.enrollment-row .class-section-main h3 {
   font-size: 1.15rem;
 }
 
@@ -834,8 +859,13 @@ small {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .term-pill {
+  .term-pill,
+  .class-section-action {
     justify-self: start;
     margin-left: 62px;
+  }
+
+  .class-section-card {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 }

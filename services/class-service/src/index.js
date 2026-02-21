@@ -20,6 +20,18 @@ const defaultSectionMaxGroupSize = Math.min(
   Math.max(Number(process.env.DEFAULT_SECTION_MAX_GROUP_SIZE || 4) || 4, 2),
   20,
 );
+const autoSeedCatalog = String(process.env.CLASS_AUTO_SEED || "true").toLowerCase() !== "false";
+
+const defaultCatalogSeed = [
+  { id: "CPSC 110", title: "Computation, Programs, and Programming", term: "2026W", description: "Introductory programming and problem solving." },
+  { id: "CPSC 121", title: "Models of Computation", term: "2026W", description: "Logic, proofs, and computational models." },
+  { id: "CPSC 210", title: "Software Construction", term: "2026W", description: "Object-oriented software development fundamentals." },
+  { id: "CPSC 221", title: "Basic Algorithms and Data Structures", term: "2026W", description: "Core data structures and algorithmic techniques." },
+  { id: "CPSC 310", title: "Introduction to Software Engineering", term: "2026W", description: "Team-based software engineering process." },
+  { id: "CPSC 320", title: "Intermediate Algorithm Design and Analysis", term: "2026W", description: "Advanced algorithm design and complexity analysis." },
+  { id: "ELEC 221", title: "Basic Circuits and Electronics", term: "2026W", description: "Circuits, devices, and electrical systems." },
+  { id: "MATH 221", title: "Matrix Algebra", term: "2026W", description: "Linear algebra, matrices, and vector spaces." },
+];
 
 let producer = null;
 
@@ -217,6 +229,32 @@ async function ensureSchema() {
        AND g.class_id = ps.class_id
        AND g.project_section = ps.name`,
   );
+}
+
+async function ensureCatalogSeeded() {
+  if (!autoSeedCatalog) {
+    return;
+  }
+
+  const countResult = await pool.query(`SELECT COUNT(*)::int AS count FROM classes`);
+  const classCount = Number(countResult.rows[0]?.count || 0);
+  if (classCount > 0) {
+    return;
+  }
+
+  for (const item of defaultCatalogSeed) {
+    await pool.query(
+      `INSERT INTO classes (id, title, term, description)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (id)
+       DO UPDATE SET title = EXCLUDED.title,
+                     term = EXCLUDED.term,
+                     description = EXCLUDED.description`,
+      [normalizeClassId(item.id), normalizeText(item.title), normalizeText(item.term), normalizeText(item.description)],
+    );
+  }
+
+  app.log.info({ seeded: defaultCatalogSeed.length }, "class catalog seeded");
 }
 
 async function loadClass(classId, client = pool) {
@@ -1448,6 +1486,7 @@ async function start() {
 
   await app.register(cors, { origin: true });
   await ensureSchema();
+  await ensureCatalogSeeded();
   await connectProducer();
   await app.listen({ port, host: "0.0.0.0" });
 }

@@ -1,6 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import ClassSectionCard from "../components/ClassSectionCard";
+
+function normalizeClassSection(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const classId = String(item.classId || item.class_id || item.id || "")
+    .trim()
+    .toUpperCase();
+  if (!classId) {
+    return null;
+  }
+
+  return {
+    classId,
+    title: String(item.title || item.name || classId).trim(),
+    term: String(item.term || item.section || "").trim(),
+    description: String(item.description || "").trim(),
+    enrolledAt: item.enrolledAt || item.enrolled_at || item.created_at || "",
+  };
+}
 
 export default function HomePage() {
   const { apiFetch } = useAuth();
@@ -22,7 +43,8 @@ export default function HomePage() {
     setError("");
     try {
       const payload = await apiFetch("/api/classes/enrollments/me");
-      setEnrollments(payload.enrollments || []);
+      const normalized = (payload.enrollments || []).map(normalizeClassSection).filter(Boolean);
+      setEnrollments(normalized);
     } catch (fetchError) {
       setError(fetchError.message || "Failed to load enrolled classes");
     } finally {
@@ -48,7 +70,8 @@ export default function HomePage() {
       params.set("limit", "50");
 
       const payload = await apiFetch(`/api/classes?${params.toString()}`);
-      setSearchResults(payload.classes || []);
+      const normalized = (payload.classes || []).map(normalizeClassSection).filter(Boolean);
+      setSearchResults(normalized);
     } catch (searchError) {
       setError(searchError.message || "Class search failed");
     } finally {
@@ -88,17 +111,17 @@ export default function HomePage() {
 
         <div className="enrollment-list">
           {enrollments.map((item, index) => (
-            <Link className="enrollment-row" key={item.classId} to={`/classes/${encodeURIComponent(item.classId)}`}>
-              <div className={`class-avatar ${accentClasses[index % accentClasses.length]}`} aria-hidden="true">
-                {item.classId.slice(0, 2).toUpperCase()}
-              </div>
-              <div className="enrollment-row-main">
-                <h3>{item.classId}</h3>
-                <p>{item.title}</p>
-                <small>Enrolled: {new Date(item.enrolledAt).toLocaleString()}</small>
-              </div>
-              <span className="term-pill">{item.term}</span>
-            </Link>
+            <ClassSectionCard
+              key={item.classId}
+              to={`/classes/${encodeURIComponent(item.classId)}`}
+              classId={item.classId}
+              title={item.title}
+              term={item.term}
+              description={item.description}
+              meta={item.enrolledAt ? `Enrolled: ${new Date(item.enrolledAt).toLocaleString()}` : ""}
+              accentClass={accentClasses[index % accentClasses.length]}
+              className="enrollment-row"
+            />
           ))}
         </div>
       </section>
@@ -124,24 +147,28 @@ export default function HomePage() {
         </button>
 
         <div className="search-results">
-          {searchResults.map((item) => {
-            const alreadyEnrolled = enrolledSet.has(item.id);
+          {searchResults.map((item, index) => {
+            const alreadyEnrolled = enrolledSet.has(item.classId);
             return (
-              <article className="result-item" key={item.id}>
-                <div>
-                  <h3>{item.id}</h3>
-                  <p>{item.title}</p>
-                  <small>{item.term}</small>
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  type="button"
-                  disabled={alreadyEnrolled}
-                  onClick={() => enrollClass(item.id)}
-                >
-                  {alreadyEnrolled ? "Enrolled" : "Enroll"}
-                </button>
-              </article>
+              <ClassSectionCard
+                key={`${item.classId}-${item.term || "term"}`}
+                classId={item.classId}
+                title={item.title}
+                term={item.term}
+                description={item.description}
+                accentClass={accentClasses[index % accentClasses.length]}
+                className="result-item"
+                action={
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    disabled={alreadyEnrolled}
+                    onClick={() => enrollClass(item.classId)}
+                  >
+                    {alreadyEnrolled ? "Enrolled" : "Enroll"}
+                  </button>
+                }
+              />
             );
           })}
         </div>
