@@ -38,6 +38,194 @@ function createS3Client(endpoint) {
 const s3Enabled = Boolean(bucketName && s3Endpoint && s3PublicEndpoint && s3AccessKey && s3SecretKey);
 const s3Client = s3Enabled ? createS3Client(s3Endpoint) : null;
 const s3PresignClient = s3Enabled ? createS3Client(s3PublicEndpoint) : null;
+const universitySkillCatalog = Array.from(
+  new Set([
+    "Academic Advising",
+    "Academic Integrity",
+    "Academic Research",
+    "Algorithm Design",
+    "Analytical Reasoning",
+    "Android Development",
+    "Applied Calculus",
+    "Applied Statistics",
+    "Argumentation",
+    "Arduino",
+    "Artificial Intelligence",
+    "Audience Analysis",
+    "AutoCAD",
+    "Bioinformatics",
+    "Biology Lab Techniques",
+    "Biostatistics",
+    "Business Analysis",
+    "Business Writing",
+    "C Programming",
+    "C++",
+    "CAD Modeling",
+    "Case Study Analysis",
+    "Cell Culture",
+    "Chemical Safety",
+    "Chemistry Lab Techniques",
+    "Circuit Analysis",
+    "Clinical Documentation",
+    "Cloud Computing",
+    "Communication Skills",
+    "Comparative Analysis",
+    "Computational Modeling",
+    "Computer Networks",
+    "Conflict Resolution",
+    "Content Strategy",
+    "Critical Reading",
+    "Critical Thinking",
+    "Cross-Functional Collaboration",
+    "Curriculum Design",
+    "Cybersecurity",
+    "Data Analysis",
+    "Data Cleaning",
+    "Data Ethics",
+    "Data Governance",
+    "Data Management",
+    "Data Modeling",
+    "Data Storytelling",
+    "Data Structures",
+    "Database Design",
+    "Database Management",
+    "Deep Learning",
+    "Design Thinking",
+    "Digital Accessibility",
+    "Digital Logic",
+    "Digital Marketing",
+    "Discrete Mathematics",
+    "Discussion Facilitation",
+    "Documentation",
+    "Econometrics",
+    "Economic Analysis",
+    "Editorial Writing",
+    "Electrical Engineering Fundamentals",
+    "Embedded Systems",
+    "Environmental Analysis",
+    "Ethical Decision-Making",
+    "Experiment Design",
+    "Experimental Physics",
+    "Figma",
+    "Field Research",
+    "Financial Analysis",
+    "Forecasting",
+    "Frontend Development",
+    "Full-Stack Development",
+    "Game Development",
+    "Genetics",
+    "GIS",
+    "Git",
+    "Go",
+    "Google Analytics",
+    "Grant Writing",
+    "Graphic Design",
+    "Group Facilitation",
+    "Healthcare Data Analysis",
+    "Human-Computer Interaction",
+    "Hypothesis Testing",
+    "Information Architecture",
+    "Information Literacy",
+    "Innovation Management",
+    "Instructional Design",
+    "Instrument Calibration",
+    "Interviewing",
+    "iOS Development",
+    "Java",
+    "JavaScript",
+    "Journal Article Review",
+    "Journalism",
+    "Jupyter",
+    "Kotlin",
+    "Lab Reporting",
+    "Laboratory Safety",
+    "Leadership",
+    "Linear Algebra",
+    "Literature Review",
+    "Machine Learning",
+    "Marketing Research",
+    "Mathematical Proofs",
+    "Matlab",
+    "Mechanical Design",
+    "Medical Terminology",
+    "Mentorship",
+    "Microeconomics",
+    "Microsoft Excel",
+    "Molecular Biology",
+    "Multivariable Calculus",
+    "Natural Language Processing",
+    "Negotiation",
+    "Network Security",
+    "Neural Networks",
+    "Nursing Fundamentals",
+    "Object-Oriented Programming",
+    "Operations Research",
+    "Organic Chemistry",
+    "Peer Review",
+    "Policy Analysis",
+    "Population Health",
+    "Poster Design",
+    "Presentation Skills",
+    "Problem Solving",
+    "Product Management",
+    "Program Evaluation",
+    "Project Coordination",
+    "Project Management",
+    "Proofreading",
+    "Psychological Assessment",
+    "Public Health Research",
+    "Public Speaking",
+    "Public Policy",
+    "Python",
+    "Qualitative Analysis",
+    "Quantitative Analysis",
+    "React",
+    "Regression Analysis",
+    "Research Methods",
+    "Research Synthesis",
+    "Risk Analysis",
+    "R Programming",
+    "Robotics",
+    "Scientific Computing",
+    "Scientific Communication",
+    "Scientific Writing",
+    "SDLC",
+    "Seminar Leadership",
+    "Signal Processing",
+    "Social Media Strategy",
+    "Sociological Theory",
+    "Software Architecture",
+    "Software Debugging",
+    "Software Design",
+    "Software Engineering",
+    "Software Testing",
+    "SolidWorks",
+    "SPSS",
+    "SQL",
+    "Statistical Inference",
+    "Strategic Planning",
+    "Survey Design",
+    "Sustainability Analysis",
+    "System Design",
+    "Tableau",
+    "Team Collaboration",
+    "Technical Communication",
+    "Technical Writing",
+    "Thermodynamics",
+    "Time Management",
+    "TypeScript",
+    "UI Design",
+    "User Interviews",
+    "User Research",
+    "UX Design",
+    "Version Control",
+    "Video Editing",
+    "Web Accessibility",
+    "Web Development",
+    "Wireless Communications",
+    "Workshop Facilitation",
+  ]),
+);
 
 let producer = null;
 
@@ -55,6 +243,61 @@ function toArray(value) {
     return [];
   }
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9+#&/\-.\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function clampSearchLimit(raw, fallback = 20, max = 60) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(parsed), 1), max);
+}
+
+function searchUniversitySkills(query, limit) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) {
+    return universitySkillCatalog.slice(0, limit);
+  }
+
+  const tokens = normalizedQuery.split(" ").filter(Boolean);
+  const queryLength = normalizedQuery.length;
+  const matches = [];
+
+  for (const skill of universitySkillCatalog) {
+    const normalizedSkill = normalizeSearchText(skill);
+    if (tokens.some((token) => !normalizedSkill.includes(token))) {
+      continue;
+    }
+
+    let score = 0;
+    if (normalizedSkill === normalizedQuery) {
+      score += 1000;
+    }
+    if (normalizedSkill.startsWith(normalizedQuery)) {
+      score += 400;
+    }
+
+    const firstIndex = normalizedSkill.indexOf(normalizedQuery);
+    if (firstIndex >= 0) {
+      score += Math.max(0, 200 - firstIndex);
+    }
+
+    score += Math.max(0, 80 - Math.abs(normalizedSkill.length - queryLength));
+    matches.push({ skill, score });
+  }
+
+  return matches
+    .sort((left, right) => right.score - left.score || left.skill.localeCompare(right.skill))
+    .slice(0, limit)
+    .map((item) => item.skill);
 }
 
 function normalizeContentType(value) {
@@ -189,6 +432,17 @@ function ensureSelfAccess(request, reply, userId) {
 app.get("/health", async () => {
   await pool.query("SELECT 1");
   return { status: "ok", service: "profile-service", objectStorageEnabled: s3Enabled };
+});
+
+app.get("/skills/search", async (request, reply) => {
+  const requesterId = getRequesterUserId(request);
+  if (!requesterId) {
+    return reply.code(401).send({ error: "missing authenticated user context" });
+  }
+
+  const q = typeof request.query.q === "string" ? request.query.q : "";
+  const limit = clampSearchLimit(request.query.limit, 20, 60);
+  return reply.send({ skills: searchUniversitySkills(q, limit) });
 });
 
 app.get("/:userId", async (request, reply) => {

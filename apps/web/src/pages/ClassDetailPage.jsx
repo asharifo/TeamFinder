@@ -407,7 +407,7 @@ export default function ClassDetailPage() {
         <section className="class-flow-block">
           <div className="section-heading">
             <h3>Available Groups</h3>
-            <span className="muted">{availableGroups.length} groups</span>
+            <span> {availableGroups.length} {availableGroups.length === 1 ? "group" : "groups"}</span>
           </div>
 
           {availableGroups.length === 0 ? (

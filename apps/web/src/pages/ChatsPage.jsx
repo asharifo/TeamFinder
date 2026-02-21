@@ -480,7 +480,7 @@ export default function ChatsPage() {
             </article>
           ))}
           {visibleConversations.length === 0 ? (
-            <p className="muted">Start a conversation with a student or group!.</p>
+            <p className="muted">Start a conversation with a student or group!</p>
           ) : null}
         </div>
       </section>

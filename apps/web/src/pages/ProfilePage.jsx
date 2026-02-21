@@ -1,46 +1,36 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 
-function toCsv(value) {
+function normalizeSkills(value) {
   if (!Array.isArray(value)) {
-    return "";
+    return [];
   }
-  return value.join(", ");
-}
-
-function fromCsv(value) {
-  return String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
 export default function ProfilePage() {
   const { apiFetch, session } = useAuth();
 
-  const [form, setForm] = useState({
-    about: "",
-    skillsCsv: "",
-    classesCsv: "",
-    availability: "",
-    profilePictureUrl: "",
-  });
+  const [about, setAbout] = useState("");
+  const [selectedSkills, setSelectedSkills] = useState([]);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillResults, setSkillResults] = useState([]);
+  const [profilePictureUrl, setProfilePictureUrl] = useState("");
   const [file, setFile] = useState(null);
-  const [profilePicturePreviewUrl, setProfilePicturePreviewUrl] = useState("");
   const [recommendations, setRecommendations] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingSkills, setIsLoadingSkills] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
   const userId = session.user?.id || "";
 
-  const previewImageUrl = useMemo(() => {
-    if (form.profilePictureUrl.startsWith("http://") || form.profilePictureUrl.startsWith("https://")) {
-      return form.profilePictureUrl;
-    }
-    return profilePicturePreviewUrl;
-  }, [form.profilePictureUrl, profilePicturePreviewUrl]);
+  const selectedSkillSet = useMemo(() => new Set(selectedSkills), [selectedSkills]);
+  const visibleSkillResults = useMemo(
+    () => skillResults.filter((skill) => !selectedSkillSet.has(skill)),
+    [skillResults, selectedSkillSet],
+  );
 
   const loadProfile = useCallback(async () => {
     if (!userId) {
@@ -52,25 +42,15 @@ export default function ProfilePage() {
 
     try {
       const payload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`);
-      const profile = payload.profile;
-      setForm({
-        about: profile.about || "",
-        skillsCsv: toCsv(profile.skills),
-        classesCsv: toCsv(profile.classes),
-        availability: profile.availability || "",
-        profilePictureUrl: profile.profile_picture_url || "",
-      });
-      setProfilePicturePreviewUrl(profile.profile_picture_view_url || "");
+      const profile = payload.profile || {};
+      setAbout(profile.about || "");
+      setSelectedSkills(normalizeSkills(profile.skills));
+      setProfilePictureUrl(profile.profile_picture_url || "");
     } catch (profileError) {
       if (profileError.status === 404) {
-        setForm({
-          about: "",
-          skillsCsv: "",
-          classesCsv: "",
-          availability: "",
-          profilePictureUrl: "",
-        });
-        setProfilePicturePreviewUrl("");
+        setAbout("");
+        setSelectedSkills([]);
+        setProfilePictureUrl("");
       } else {
         setError(profileError.message || "Failed to load profile");
       }
@@ -97,8 +77,37 @@ export default function ProfilePage() {
     loadRecommendations();
   }, [loadProfile, loadRecommendations]);
 
-  const updateFormField = useCallback((key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  useEffect(() => {
+    const handle = setTimeout(async () => {
+      setIsLoadingSkills(true);
+      try {
+        const payload = await apiFetch(
+          `/api/profiles/skills/search?q=${encodeURIComponent(skillQuery)}&limit=20`,
+        );
+        setSkillResults(normalizeSkills(payload.skills));
+      } catch (_error) {
+        setSkillResults([]);
+      } finally {
+        setIsLoadingSkills(false);
+      }
+    }, 180);
+
+    return () => clearTimeout(handle);
+  }, [apiFetch, skillQuery]);
+
+  const addSkill = useCallback((skill) => {
+    const normalized = String(skill || "").trim();
+    if (!normalized) {
+      return;
+    }
+    setSelectedSkills((currentValue) =>
+      currentValue.includes(normalized) ? currentValue : [...currentValue, normalized],
+    );
+    setSkillQuery("");
+  }, []);
+
+  const removeSkill = useCallback((skill) => {
+    setSelectedSkills((currentValue) => currentValue.filter((value) => value !== skill));
   }, []);
 
   const saveProfile = useCallback(
@@ -109,71 +118,55 @@ export default function ProfilePage() {
       setInfo("");
 
       try {
-        const payload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`, {
+        let nextProfilePictureUrl = profilePictureUrl;
+
+        if (file) {
+          const uploadMeta = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}/picture/upload-url`, {
+            method: "POST",
+            body: JSON.stringify({ contentType: file.type || "image/jpeg" }),
+          });
+
+          const uploadResponse = await fetch(uploadMeta.uploadUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": uploadMeta.contentType,
+            },
+            body: file,
+          });
+
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed (${uploadResponse.status})`);
+          }
+
+          const confirmPayload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}/picture/confirm`, {
+            method: "POST",
+            body: JSON.stringify({ objectKey: uploadMeta.objectKey }),
+          });
+
+          nextProfilePictureUrl = String(confirmPayload.profilePictureUrl || nextProfilePictureUrl || "").trim();
+          setProfilePictureUrl(nextProfilePictureUrl);
+          setFile(null);
+        }
+
+        await apiFetch(`/api/profiles/${encodeURIComponent(userId)}`, {
           method: "PUT",
           body: JSON.stringify({
-            about: form.about,
-            skills: fromCsv(form.skillsCsv),
-            classes: fromCsv(form.classesCsv),
-            availability: form.availability,
-            profilePictureUrl: form.profilePictureUrl,
+            about,
+            skills: selectedSkills,
+            profilePictureUrl: nextProfilePictureUrl,
           }),
         });
 
-        const savedProfile = payload.profile || {};
-        setProfilePicturePreviewUrl(savedProfile.profile_picture_view_url || "");
         window.dispatchEvent(new Event("teamfinder:profile-updated"));
-        setInfo("Profile saved");
+        setInfo(file ? "Profile and image saved" : "Profile saved");
       } catch (saveError) {
         setError(saveError.message || "Failed to save profile");
       } finally {
         setIsSaving(false);
       }
     },
-    [apiFetch, form, userId],
+    [about, apiFetch, file, profilePictureUrl, selectedSkills, userId],
   );
-
-  const uploadPicture = useCallback(async () => {
-    if (!file) {
-      setError("Select an image first");
-      return;
-    }
-
-    setError("");
-    setInfo("");
-
-    try {
-      const uploadMeta = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}/picture/upload-url`, {
-        method: "POST",
-        body: JSON.stringify({ contentType: file.type || "image/jpeg" }),
-      });
-
-      const uploadResponse = await fetch(uploadMeta.uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": uploadMeta.contentType,
-        },
-        body: file,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error(`Upload failed (${uploadResponse.status})`);
-      }
-
-      const confirmPayload = await apiFetch(`/api/profiles/${encodeURIComponent(userId)}/picture/confirm`, {
-        method: "POST",
-        body: JSON.stringify({ objectKey: uploadMeta.objectKey }),
-      });
-
-      updateFormField("profilePictureUrl", confirmPayload.profilePictureUrl || "");
-      setProfilePicturePreviewUrl(confirmPayload.profilePictureViewUrl || "");
-      window.dispatchEvent(new Event("teamfinder:profile-updated"));
-      setInfo("Profile image uploaded");
-      setFile(null);
-    } catch (uploadError) {
-      setError(uploadError.message || "Failed to upload profile image");
-    }
-  }, [apiFetch, file, userId, updateFormField]);
 
   return (
     <div className="page-grid">
@@ -185,68 +178,78 @@ export default function ProfilePage() {
         {isLoading ? <p className="muted">Loading profile...</p> : null}
 
         <form className="form-grid" onSubmit={saveProfile}>
+          <div className="profile-file-row">
+            <label htmlFor="profile-image-upload">Profile picture</label>
+            <div className="profile-file-controls">
+              <label className="profile-file-picker" htmlFor="profile-image-upload">
+                {file ? `Selected: ${file.name}` : "Choose Image"}
+              </label>
+              <input
+                id="profile-image-upload"
+                className="profile-file-input"
+                type="file"
+                accept="image/*"
+                onChange={(event) => setFile(event.target.files?.[0] || null)}
+              />
+              <small className="muted">
+                {file ? "Image will upload when you save profile." : "PNG, JPG, WEBP, or GIF"}
+              </small>
+            </div>
+          </div>
+
           <label>
             About
             <textarea
               rows={4}
-              value={form.about}
-              onChange={(event) => updateFormField("about", event.target.value)}
+              value={about}
+              onChange={(event) => setAbout(event.target.value)}
               placeholder="Your study interests, goals, and what kind of teammates you need"
             />
           </label>
 
-          <label>
-            Skills (comma separated)
-            <input
-              value={form.skillsCsv}
-              onChange={(event) => updateFormField("skillsCsv", event.target.value)}
-              placeholder="e.g. Java, React, SQL"
-            />
-          </label>
+          <div className="profile-skills-field">
+            <label htmlFor="profile-skills-search">Skills</label>
 
-          <label>
-            Classes (comma separated)
-            <input
-              value={form.classesCsv}
-              onChange={(event) => updateFormField("classesCsv", event.target.value)}
-              placeholder="e.g. CPSC210, CPSC221"
-            />
-          </label>
+            {selectedSkills.length > 0 ? (
+              <div className="profile-skill-chip-list">
+                {selectedSkills.map((skill) => (
+                  <span className="profile-skill-chip" key={skill}>
+                    {skill}
+                    <button type="button" onClick={() => removeSkill(skill)} aria-label={`Remove ${skill}`}>
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">No skills selected yet.</p>
+            )}
 
-          <label>
-            Availability
             <input
-              value={form.availability}
-              onChange={(event) => updateFormField("availability", event.target.value)}
-              placeholder="e.g. Weekdays after 5pm"
+              id="profile-skills-search"
+              value={skillQuery}
+              onChange={(event) => setSkillQuery(event.target.value)}
+              placeholder="Search university-related skills"
+              autoComplete="off"
             />
-          </label>
 
-          <label>
-            Profile image URL
-            <input
-              value={form.profilePictureUrl}
-              onChange={(event) => updateFormField("profilePictureUrl", event.target.value)}
-              placeholder="s3://... or https://..."
-            />
-          </label>
+            {isLoadingSkills ? <p className="muted">Searching skills...</p> : null}
+
+            {visibleSkillResults.length > 0 ? (
+              <div className="profile-skill-results" role="listbox" aria-label="Suggested skills">
+                {visibleSkillResults.map((skill) => (
+                  <button key={skill} type="button" className="profile-skill-result" onClick={() => addSkill(skill)}>
+                    {skill}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           <button className="btn btn-primary" type="submit" disabled={isSaving}>
             {isSaving ? "Saving..." : "Save Profile"}
           </button>
         </form>
-
-        <div className="upload-row">
-          <label>
-            Upload image
-            <input type="file" accept="image/*" onChange={(event) => setFile(event.target.files?.[0] || null)} />
-          </label>
-          <button className="btn btn-secondary" type="button" onClick={uploadPicture} disabled={!file}>
-            Upload
-          </button>
-        </div>
-
-        {previewImageUrl ? <img src={previewImageUrl} alt="Profile" className="profile-preview" /> : null}
 
         {info ? <p className="notice success">{info}</p> : null}
         {error ? <p className="notice error">{error}</p> : null}
