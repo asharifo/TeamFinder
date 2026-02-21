@@ -18,22 +18,26 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const bucketName = process.env.S3_BUCKET || "";
 const s3Endpoint = process.env.S3_ENDPOINT || "";
+const s3PublicEndpoint = process.env.S3_PUBLIC_ENDPOINT || s3Endpoint;
 const s3Region = process.env.S3_REGION || "us-east-1";
 const s3AccessKey = process.env.S3_ACCESS_KEY || "";
 const s3SecretKey = process.env.S3_SECRET_KEY || "";
 
-const s3Enabled = Boolean(bucketName && s3Endpoint && s3AccessKey && s3SecretKey);
-const s3Client = s3Enabled
-  ? new S3Client({
-      region: s3Region,
-      endpoint: s3Endpoint,
-      forcePathStyle: true,
-      credentials: {
-        accessKeyId: s3AccessKey,
-        secretAccessKey: s3SecretKey,
-      },
-    })
-  : null;
+function createS3Client(endpoint) {
+  return new S3Client({
+    region: s3Region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: s3AccessKey,
+      secretAccessKey: s3SecretKey,
+    },
+  });
+}
+
+const s3Enabled = Boolean(bucketName && s3Endpoint && s3PublicEndpoint && s3AccessKey && s3SecretKey);
+const s3Client = s3Enabled ? createS3Client(s3Endpoint) : null;
+const s3PresignClient = s3Enabled ? createS3Client(s3PublicEndpoint) : null;
 
 let producer = null;
 
@@ -127,6 +131,21 @@ function ensureOwner(request, reply, userId) {
   return true;
 }
 
+function ensureSelfAccess(request, reply, userId) {
+  const requesterId = getRequesterUserId(request);
+  if (!requesterId) {
+    reply.code(401).send({ error: "missing authenticated user context" });
+    return false;
+  }
+
+  if (requesterId !== userId) {
+    reply.code(403).send({ error: "cannot access another user profile" });
+    return false;
+  }
+
+  return true;
+}
+
 app.get("/health", async () => {
   await pool.query("SELECT 1");
   return { status: "ok", service: "profile-service", objectStorageEnabled: s3Enabled };
@@ -134,6 +153,9 @@ app.get("/health", async () => {
 
 app.get("/:userId", async (request, reply) => {
   const { userId } = request.params;
+  if (!ensureSelfAccess(request, reply, userId)) {
+    return;
+  }
 
   const result = await pool.query(
     `SELECT user_id, about, classes, skills, availability, profile_picture_url, updated_at
@@ -199,7 +221,7 @@ app.post("/:userId/picture/upload-url", async (request, reply) => {
     return;
   }
 
-  if (!s3Enabled || !s3Client) {
+  if (!s3Enabled || !s3Client || !s3PresignClient) {
     return reply.code(503).send({ error: "object storage is not configured" });
   }
 
@@ -214,7 +236,7 @@ app.post("/:userId/picture/upload-url", async (request, reply) => {
       ContentType: contentType,
     });
 
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+    const uploadUrl = await getSignedUrl(s3PresignClient, command, { expiresIn: 900 });
     return reply.send({
       bucket: bucketName,
       objectKey,

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "lint": "node --check src/index.js",
+    "test": "node --check src/index.js"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

@@ -29,9 +29,9 @@ function loadStoredSession() {
     const parsed = JSON.parse(raw);
     return {
       sessionId: parsed.sessionId || "",
-      accessToken: parsed.accessToken || "",
-      idToken: parsed.idToken || "",
-      expiresAt: Number(parsed.expiresAt || 0),
+      accessToken: "",
+      idToken: "",
+      expiresAt: 0,
       user: parsed.user || null,
     };
   } catch (_error) {
@@ -40,7 +40,7 @@ function loadStoredSession() {
 }
 
 function storeSession(session) {
-  if (!session.sessionId || !session.accessToken || !session.user?.id) {
+  if (!session.sessionId || !session.user?.id) {
     localStorage.removeItem(STORAGE_KEY);
     return;
   }
@@ -49,9 +49,6 @@ function storeSession(session) {
     STORAGE_KEY,
     JSON.stringify({
       sessionId: session.sessionId,
-      accessToken: session.accessToken,
-      idToken: session.idToken,
-      expiresAt: session.expiresAt,
       user: session.user,
     }),
   );
@@ -209,11 +206,11 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    const expectedState = localStorage.getItem(PKCE_STATE_KEY) || "";
-    const codeVerifier = localStorage.getItem(PKCE_VERIFIER_KEY) || "";
+    const expectedState = sessionStorage.getItem(PKCE_STATE_KEY) || "";
+    const codeVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || "";
 
-    localStorage.removeItem(PKCE_STATE_KEY);
-    localStorage.removeItem(PKCE_VERIFIER_KEY);
+    sessionStorage.removeItem(PKCE_STATE_KEY);
+    sessionStorage.removeItem(PKCE_VERIFIER_KEY);
 
     if (!expectedState || callbackState !== expectedState || !codeVerifier) {
       setAuthError("Invalid authentication state. Please try logging in again.");
@@ -307,8 +304,8 @@ export function AuthProvider({ children }) {
       const { verifier, challenge } = await generatePkcePair();
       const stateToken = generateStateToken();
 
-      localStorage.setItem(PKCE_VERIFIER_KEY, verifier);
-      localStorage.setItem(PKCE_STATE_KEY, stateToken);
+      sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
+      sessionStorage.setItem(PKCE_STATE_KEY, stateToken);
 
       const authorizeUrl = new URL(`https://${config.domain}/authorize`);
       authorizeUrl.searchParams.set("response_type", "code");

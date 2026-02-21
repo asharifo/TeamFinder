@@ -12,9 +12,10 @@ const app = fastify({
 
 const port = Number(process.env.PORT || 3003);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const ingestToken = process.env.INGEST_TOKEN || "dev-ingest-token";
+const ingestToken = String(process.env.INGEST_TOKEN || "").trim();
 const messagingServiceUrl = String(process.env.MESSAGING_SERVICE_URL || "http://messaging-service:3004").replace(/\/$/, "");
-const internalServiceToken = process.env.INTERNAL_SERVICE_TOKEN || "dev-service-token";
+const internalServiceToken = String(process.env.INTERNAL_SERVICE_TOKEN || "").trim();
+const syncTimeoutMs = Math.min(Math.max(Number(process.env.SYNC_REQUEST_TIMEOUT_MS || 5000) || 5000, 500), 30000);
 const defaultSectionMaxGroupSize = Math.min(
   Math.max(Number(process.env.DEFAULT_SECTION_MAX_GROUP_SIZE || 4) || 4, 2),
   20,
@@ -407,13 +408,46 @@ async function userHasGroupInSection(classId, userId, projectSectionId, projectS
   return result.rowCount > 0;
 }
 
+async function lockUserSectionMembership({
+  classId,
+  userId,
+  projectSectionId,
+  projectSectionName,
+  client,
+}) {
+  const normalizedClassId = normalizeClassId(classId);
+  const normalizedUserId = normalizeText(userId);
+  const sectionKey = normalizeText(projectSectionId || projectSectionName);
+
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+    [`${normalizedClassId}:${normalizedUserId}`, sectionKey],
+  );
+}
+
+async function fetchWithTimeout(url, init, timeoutMs = syncTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function syncGroupConversation({ groupId, classId, memberUserIds }) {
-  if (!messagingServiceUrl) {
+  if (!messagingServiceUrl || !internalServiceToken) {
     return;
   }
 
   try {
-    const response = await fetch(`${messagingServiceUrl}/internal/group-conversations/sync`, {
+    const response = await fetchWithTimeout(`${messagingServiceUrl}/internal/group-conversations/sync`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -439,6 +473,10 @@ async function syncGroupConversation({ groupId, classId, memberUserIds }) {
       );
     }
   } catch (error) {
+    if (error && error.name === "AbortError") {
+      app.log.warn({ groupId, classId, timeoutMs: syncTimeoutMs }, "timed out calling messaging-service for group sync");
+      return;
+    }
     app.log.warn({ error, groupId, classId }, "failed to call messaging-service for group sync");
   }
 }
@@ -731,11 +769,21 @@ app.post("/:classId/project-sections", async (request, reply) => {
 });
 
 app.get("/:classId/members", async (request, reply) => {
+  const requesterId = requireRequesterUserId(request, reply);
+  if (!requesterId) {
+    return;
+  }
+
   const classId = normalizeClassId(request.params.classId);
 
   const classResult = await pool.query("SELECT id, title, term FROM classes WHERE id = $1", [classId]);
   if (classResult.rowCount === 0) {
     return reply.code(404).send({ error: "class not found" });
+  }
+
+  const enrolled = await isEnrolled(classId, requesterId);
+  if (!enrolled) {
+    return reply.code(403).send({ error: "you must be enrolled in the class to view members" });
   }
 
   const members = await pool.query(
@@ -753,11 +801,21 @@ app.get("/:classId/members", async (request, reply) => {
 });
 
 app.get("/:classId/groups", async (request, reply) => {
+  const requesterId = requireRequesterUserId(request, reply);
+  if (!requesterId) {
+    return;
+  }
+
   const classId = normalizeClassId(request.params.classId);
 
   const classResult = await pool.query("SELECT id, title, term FROM classes WHERE id = $1", [classId]);
   if (classResult.rowCount === 0) {
     return reply.code(404).send({ error: "class not found" });
+  }
+
+  const enrolled = await isEnrolled(classId, requesterId);
+  if (!enrolled) {
+    return reply.code(403).send({ error: "you must be enrolled in the class to view groups" });
   }
 
   const groups = await pool.query(
@@ -861,6 +919,14 @@ app.post("/:classId/groups", async (request, reply) => {
     } else {
       section = await loadOrCreateProjectSectionByName(classId, rawProjectSection, ownerUserId, client);
     }
+
+    await lockUserSectionMembership({
+      classId,
+      userId: ownerUserId,
+      projectSectionId: section.id,
+      projectSectionName: section.name,
+      client,
+    });
 
     const alreadyInSectionGroup = await userHasGroupInSection(
       classId,
@@ -1038,6 +1104,14 @@ app.post("/groups/:groupId/requests/:userId/approve", async (request, reply) => 
       await client.query("ROLLBACK");
       return reply.code(409).send({ error: "user is not enrolled in the class" });
     }
+
+    await lockUserSectionMembership({
+      classId: group.class_id,
+      userId,
+      projectSectionId: group.project_section_id,
+      projectSectionName: group.project_section_name,
+      client,
+    });
 
     const targetAlreadyInSection = await userHasGroupInSection(
       group.class_id,
@@ -1364,6 +1438,14 @@ app.delete("/groups/:groupId", async (request, reply) => {
 });
 
 async function start() {
+  if (!ingestToken) {
+    throw new Error("INGEST_TOKEN must be set");
+  }
+
+  if (messagingServiceUrl && !internalServiceToken) {
+    throw new Error("INTERNAL_SERVICE_TOKEN must be set");
+  }
+
   await app.register(cors, { origin: true });
   await ensureSchema();
   await connectProducer();

@@ -1,9 +1,9 @@
-[sources.docker]
-type = "docker_logs"
+[sources.internal]
+type = "internal_logs"
 
 [sinks.loki]
 type = "loki"
-inputs = ["docker"]
+inputs = ["internal"]
 endpoint = "http://loki:3100"
 out_of_order_action = "accept"
 encoding.codec = "json"

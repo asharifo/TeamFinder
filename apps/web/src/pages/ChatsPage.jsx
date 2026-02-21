@@ -3,13 +3,6 @@ import { io } from "socket.io-client";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
-function parseMembersCsv(value) {
-  return String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function formatConversationLabel(conversation) {
   if (conversation.type === "DM") {
     return `DM (${conversation.members.join(", ")})`;
@@ -46,10 +39,7 @@ export default function ChatsPage() {
   const [presenceUsers, setPresenceUsers] = useState([]);
   const [typingUsersByConversation, setTypingUsersByConversation] = useState({});
   const [draftMessage, setDraftMessage] = useState("");
-  const [newConversationType, setNewConversationType] = useState("DM");
-  const [newConversationMembers, setNewConversationMembers] = useState("");
-  const [newConversationClassId, setNewConversationClassId] = useState("");
-  const [newConversationGroupId, setNewConversationGroupId] = useState("");
+  const [newConversationOtherUserId, setNewConversationOtherUserId] = useState("");
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -322,32 +312,29 @@ export default function ChatsPage() {
       setError("");
       setInfo("");
 
+      const otherUserId = newConversationOtherUserId.trim();
+      if (!otherUserId) {
+        setError("Other user ID is required");
+        return;
+      }
+
       try {
-        const payload = await apiFetch("/api/messages/conversations", {
+        const payload = await apiFetch("/api/messages/conversations/dm", {
           method: "POST",
           body: JSON.stringify({
-            type: newConversationType,
-            memberUserIds: parseMembersCsv(newConversationMembers),
-            classId: newConversationClassId.trim() || null,
-            groupId: newConversationGroupId.trim() || null,
+            otherUserId,
           }),
         });
 
-        setInfo(`Conversation ${payload.conversation.id} created`);
+        setInfo(payload.created ? `Conversation ${payload.conversation.id} created` : `Conversation ${payload.conversation.id} opened`);
+        setNewConversationOtherUserId("");
         await loadConversations();
         setSelectedConversationId(payload.conversation.id);
       } catch (createError) {
         setError(createError.message || "Failed to create conversation");
       }
     },
-    [
-      apiFetch,
-      newConversationType,
-      newConversationMembers,
-      newConversationClassId,
-      newConversationGroupId,
-      loadConversations,
-    ],
+    [apiFetch, newConversationOtherUserId, loadConversations],
   );
 
   const sendMessageHttp = useCallback(
@@ -469,34 +456,18 @@ export default function ChatsPage() {
         </div>
 
         <form className="form-grid" onSubmit={handleCreateConversation}>
-          <h3>Create Conversation</h3>
+          <h3>Start Direct Message</h3>
           <label>
-            Type
-            <select value={newConversationType} onChange={(event) => setNewConversationType(event.target.value)}>
-              <option value="DM">DM</option>
-              <option value="CLASS">CLASS</option>
-              <option value="GROUP">GROUP</option>
-            </select>
-          </label>
-          <label>
-            Member IDs
+            Other user ID
             <input
-              value={newConversationMembers}
-              onChange={(event) => setNewConversationMembers(event.target.value)}
-              placeholder="comma separated user ids"
+              value={newConversationOtherUserId}
+              onChange={(event) => setNewConversationOtherUserId(event.target.value)}
+              placeholder="auth0|..."
               required
             />
           </label>
-          <label>
-            Class ID (optional)
-            <input value={newConversationClassId} onChange={(event) => setNewConversationClassId(event.target.value)} />
-          </label>
-          <label>
-            Group ID (optional)
-            <input value={newConversationGroupId} onChange={(event) => setNewConversationGroupId(event.target.value)} />
-          </label>
           <button className="btn btn-primary" type="submit">
-            Create
+            Open DM
           </button>
         </form>
       </section>

@@ -21,6 +21,10 @@ const auth0ClientId = String(process.env.AUTH0_CLIENT_ID || "").trim();
 const auth0ClientSecret = String(process.env.AUTH0_CLIENT_SECRET || "").trim();
 const auth0Audience = String(process.env.AUTH0_AUDIENCE || "").trim();
 const auth0DefaultRedirectUri = String(process.env.AUTH0_REDIRECT_URI || "http://localhost:8080/").trim();
+const auth0Scopes = String(process.env.AUTH0_SCOPES || "openid profile email offline_access")
+  .trim()
+  .replace(/\s+/g, " ");
+const auth0RequestTimeoutMs = Math.min(Math.max(Number(process.env.AUTH0_REQUEST_TIMEOUT_MS || 10000) || 10000, 1000), 60000);
 
 const auth0TokenUrl = `${auth0IssuerBaseUrl.replace(/\/$/, "")}/oauth/token`;
 const auth0RevokeUrl = `${auth0IssuerBaseUrl.replace(/\/$/, "")}/oauth/revoke`;
@@ -28,6 +32,29 @@ const auth0RevokeUrl = `${auth0IssuerBaseUrl.replace(/\/$/, "")}/oauth/revoke`;
 const auth0Configured = Boolean(auth0Domain && auth0ClientId && auth0ClientSecret && auth0Audience);
 
 let producer = null;
+
+async function fetchWithTimeout(url, init, timeoutMs = auth0RequestTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      const timeoutError = new Error("request to Auth0 timed out");
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function connectProducer() {
   const broker = process.env.KAFKA_BROKER;
@@ -76,7 +103,7 @@ function ensureAuth0Configured(reply) {
 }
 
 async function requestAuth0Token(body) {
-  const response = await fetch(auth0TokenUrl, {
+  const response = await fetchWithTimeout(auth0TokenUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -193,7 +220,7 @@ app.get("/public-config", async () => ({
   audience: auth0Audience,
   issuerBaseUrl: auth0IssuerBaseUrl,
   redirectUri: auth0DefaultRedirectUri,
-  scopes: "openid profile email offline_access",
+  scopes: auth0Scopes,
 }));
 
 app.post("/exchange-code", async (request, reply) => {
@@ -339,7 +366,7 @@ app.post("/logout", async (request, reply) => {
   }
 
   try {
-    await fetch(auth0RevokeUrl, {
+    await fetchWithTimeout(auth0RevokeUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",

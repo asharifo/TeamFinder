@@ -10,6 +10,12 @@ const app = fastify({
 });
 
 const port = Number(process.env.PORT || 3000);
+const upstreamTimeoutMs = Math.min(Math.max(Number(process.env.UPSTREAM_TIMEOUT_MS || 10000) || 10000, 1000), 60000);
+
+const corsAllowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "http://localhost:8080")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const auth0IssuerBaseUrl = String(process.env.AUTH0_ISSUER_BASE_URL || "").trim();
 const auth0Audience = String(process.env.AUTH0_AUDIENCE || "").trim();
@@ -64,22 +70,37 @@ function requiresAuth(prefix, method, path) {
     return false;
   }
 
-  if (prefix === "/api/messages" || prefix === "/api/recommendations") {
+  if (prefix === "/api/classes" && method === "POST" && (path === "/ingest" || path === "/ingest/")) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveCorsOrigins() {
+  if (corsAllowedOrigins.length === 0 || corsAllowedOrigins.includes("*")) {
     return true;
   }
-
-  if (prefix === "/api/profiles") {
-    return method !== "GET";
+  if (corsAllowedOrigins.length === 1) {
+    return corsAllowedOrigins[0];
   }
+  return corsAllowedOrigins;
+}
 
-  if (prefix === "/api/classes") {
-    if (path === "/ingest") {
-      return false;
-    }
-    return method !== "GET" || path.includes("/requests");
+async function fetchWithTimeout(url, init, timeoutMs = upstreamTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return false;
 }
 
 async function decodeUser(request) {
@@ -144,12 +165,16 @@ async function proxy(prefix, targetBase, request, reply) {
       }
     }
 
-    const upstream = await fetch(targetUrl, init);
+    const upstream = await fetchWithTimeout(targetUrl, init);
     const contentType = upstream.headers.get("content-type") || "application/json";
     const body = contentType.includes("application/json") ? await upstream.json() : await upstream.text();
 
     reply.code(upstream.status).header("content-type", contentType).send(body);
   } catch (error) {
+    if (error && error.name === "AbortError") {
+      return reply.code(504).send({ error: "upstream request timed out" });
+    }
+
     request.log.error(
       {
         err: {
@@ -172,7 +197,7 @@ async function registerProxy(prefix, targetBase) {
 }
 
 async function start() {
-  await app.register(cors, { origin: true });
+  await app.register(cors, { origin: resolveCorsOrigins() });
 
   for (const [prefix, target] of Object.entries(serviceMap)) {
     await registerProxy(prefix, target);

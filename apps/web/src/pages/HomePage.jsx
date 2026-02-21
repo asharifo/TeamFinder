@@ -13,6 +13,7 @@ export default function HomePage() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const accentClasses = ["accent-cyan", "accent-violet", "accent-amber", "accent-emerald"];
 
   const enrolledSet = useMemo(() => new Set(enrollments.map((item) => item.classId)), [enrollments]);
 
@@ -74,10 +75,10 @@ export default function HomePage() {
   );
 
   return (
-    <div className="page-grid">
-      <section className="card">
-        <div className="section-heading">
-          <h2>Your Enlisted Classes</h2>
+    <div className="dashboard-shell">
+      <section className="dashboard-pane classes-pane">
+        <div className="section-heading dashboard-heading">
+          <h2>Classes</h2>
           <button className="btn btn-ghost" type="button" onClick={loadEnrollments}>
             Refresh
           </button>
@@ -88,25 +89,28 @@ export default function HomePage() {
           <p className="muted">No enrollments yet. Search and enroll in classes below.</p>
         ) : null}
 
-        <div className="class-list">
-          {enrollments.map((item) => (
-            <Link className="class-card" key={item.classId} to={`/classes/${encodeURIComponent(item.classId)}`}>
-              <div className="class-card-header">
-                <h3>{item.classId}</h3>
-                <span className="badge">{item.term}</span>
+        <div className="enrollment-list">
+          {enrollments.map((item, index) => (
+            <Link className="enrollment-row" key={item.classId} to={`/classes/${encodeURIComponent(item.classId)}`}>
+              <div className={`class-avatar ${accentClasses[index % accentClasses.length]}`} aria-hidden="true">
+                {item.classId.slice(0, 2).toUpperCase()}
               </div>
-              <p>{item.title}</p>
-              <small>Enrolled: {new Date(item.enrolledAt).toLocaleString()}</small>
+              <div className="enrollment-row-main">
+                <h3>{item.classId}</h3>
+                <p>{item.title}</p>
+                <small>Enrolled: {new Date(item.enrolledAt).toLocaleString()}</small>
+              </div>
+              <span className="term-pill">{item.term}</span>
             </Link>
           ))}
         </div>
       </section>
 
-      <section className="card">
-        <h2>Find and Enroll Classes</h2>
+      <section className="dashboard-pane finder-pane">
+        <h2 className="finder-title">Find Class Sections</h2>
         <div className="form-grid two-col">
           <label>
-            Query
+            Class Name
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}

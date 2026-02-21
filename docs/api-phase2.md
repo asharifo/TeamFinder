@@ -23,10 +23,10 @@ Gateway verifies Auth0 access tokens and forwards trusted headers:
 - `POST /api/classes/enrollments` (auth, body: `{ "classId": "CPSC210" }`)
 - `GET /api/classes/enrollments/me` (auth)
 - `GET /api/classes/groups/me?classId=<id>` (auth)
-- `GET /api/classes/:classId/members`
+- `GET /api/classes/:classId/members` (auth, enrolled users)
 - `GET /api/classes/:classId/project-sections`
 - `POST /api/classes/:classId/project-sections` (auth, enrolled users)
-- `GET /api/classes/:classId/groups`
+- `GET /api/classes/:classId/groups` (auth, enrolled users)
 - `POST /api/classes/:classId/groups` (auth)
 - `GET /api/classes/groups/:groupId` (auth)
 - `POST /api/classes/groups/:groupId/requests` (auth)
@@ -41,7 +41,7 @@ Gateway verifies Auth0 access tokens and forwards trusted headers:
 - `GET /api/messages/conversations?limit=<n>` (auth, member-only list)
 - `GET /api/messages/conversations/group/:groupId` (auth, group-member only)
 - `POST /api/messages/conversations/dm` (auth, body: `{ "otherUserId": "auth0|..." }`)
-- `POST /api/messages/conversations` (auth)
+- `POST /api/messages/conversations` (auth, DM-only compatibility endpoint)
 - `POST /api/messages/conversations/:conversationId/messages` (auth)
 - `GET /api/messages/conversations/:conversationId/messages` (member only)
 - `GET /api/messages/conversations/:conversationId/presence` (member only)

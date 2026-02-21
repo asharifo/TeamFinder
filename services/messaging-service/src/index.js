@@ -25,7 +25,7 @@ const auth0Audience = String(process.env.AUTH0_AUDIENCE || "").trim();
 const auth0Configured = Boolean(auth0IssuerBaseUrl && auth0Audience);
 const issuer = auth0IssuerBaseUrl.endsWith("/") ? auth0IssuerBaseUrl : `${auth0IssuerBaseUrl}/`;
 const jwks = auth0Configured ? createRemoteJWKSet(new URL(`${issuer}.well-known/jwks.json`)) : null;
-const internalServiceToken = process.env.INTERNAL_SERVICE_TOKEN || "dev-service-token";
+const internalServiceToken = String(process.env.INTERNAL_SERVICE_TOKEN || "").trim();
 
 let producer = null;
 let io = null;
@@ -271,16 +271,23 @@ async function persistAndFanoutMessage(conversationId, senderUserId, body) {
 
   const message = inserted.rows[0];
 
-  const key = messageCacheKey(conversationId);
-  await redis.lpush(key, JSON.stringify(message));
-  await redis.ltrim(key, 0, 199);
-  await redis.expire(key, 60 * 60 * 6);
+  try {
+    const key = messageCacheKey(conversationId);
+    await redis.lpush(key, JSON.stringify(message));
+    await redis.ltrim(key, 0, 199);
+    await redis.expire(key, 60 * 60 * 6);
 
-  const members = await getConversationMemberIds(conversationId);
-  for (const userId of members) {
-    if (userId !== senderUserId) {
-      await redis.hincrby(unreadHashKey(userId), conversationId, 1);
+    const members = await getConversationMemberIds(conversationId);
+    for (const userId of members) {
+      if (userId !== senderUserId) {
+        await redis.hincrby(unreadHashKey(userId), conversationId, 1);
+      }
     }
+  } catch (error) {
+    app.log.warn(
+      { error, conversationId, senderUserId, messageId: message.id },
+      "message persisted but cache/unread updates failed",
+    );
   }
 
   await publish("chat.message.sent", conversationId, {
@@ -290,13 +297,73 @@ async function persistAndFanoutMessage(conversationId, senderUserId, body) {
   });
 
   if (io) {
-    io.to(conversationRoom(conversationId)).emit("message:new", {
-      conversationId,
-      message,
-    });
+    try {
+      io.to(conversationRoom(conversationId)).emit("message:new", {
+        conversationId,
+        message,
+      });
+    } catch (error) {
+      app.log.warn({ error, conversationId, messageId: message.id }, "failed to broadcast realtime message");
+    }
   }
 
   return message;
+}
+
+async function createOrGetDmConversation(requesterId, otherUserId) {
+  const existing = await findExistingDmConversation(requesterId, otherUserId);
+  if (existing) {
+    const members = await getConversationMemberIds(existing.id);
+    return {
+      conversation: {
+        ...formatConversationRow(existing),
+        members,
+      },
+      created: false,
+    };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const recheck = await findExistingDmConversation(requesterId, otherUserId, client);
+    let conversation = recheck;
+
+    if (!conversation) {
+      const inserted = await client.query(
+        `INSERT INTO conversations (type, class_id, group_id)
+         VALUES ('DM', NULL, NULL)
+         RETURNING id, type, class_id, group_id, created_at`,
+      );
+
+      conversation = inserted.rows[0];
+
+      await client.query(
+        `INSERT INTO conversation_members (conversation_id, user_id)
+         VALUES ($1, $2), ($1, $3)
+         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+        [conversation.id, requesterId, otherUserId],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    const members = await getConversationMemberIds(conversation.id);
+
+    return {
+      conversation: {
+        ...formatConversationRow(conversation),
+        members,
+      },
+      created: !recheck,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function joinConversationPresence(conversationId, userId) {
@@ -757,59 +824,15 @@ app.post("/conversations/dm", async (request, reply) => {
     return reply.code(400).send({ error: "cannot create DM with yourself" });
   }
 
-  const existing = await findExistingDmConversation(requesterId, otherUserId);
-  if (existing) {
-    const members = await getConversationMemberIds(existing.id);
-    return reply.send({
-      conversation: {
-        ...formatConversationRow(existing),
-        members,
-      },
-      created: false,
-    });
-  }
-
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    const recheck = await findExistingDmConversation(requesterId, otherUserId, client);
-    let conversation = recheck;
-
-    if (!conversation) {
-      const inserted = await client.query(
-        `INSERT INTO conversations (type, class_id, group_id)
-         VALUES ('DM', NULL, NULL)
-         RETURNING id, type, class_id, group_id, created_at`,
-      );
-
-      conversation = inserted.rows[0];
-
-      await client.query(
-        `INSERT INTO conversation_members (conversation_id, user_id)
-         VALUES ($1, $2), ($1, $3)
-         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
-        [conversation.id, requesterId, otherUserId],
-      );
+    const payload = await createOrGetDmConversation(requesterId, otherUserId);
+    if (payload.created) {
+      return reply.code(201).send(payload);
     }
-
-    await client.query("COMMIT");
-
-    const members = await getConversationMemberIds(conversation.id);
-
-    return reply.code(201).send({
-      conversation: {
-        ...formatConversationRow(conversation),
-        members,
-      },
-      created: !recheck,
-    });
+    return reply.send(payload);
   } catch (error) {
-    await client.query("ROLLBACK");
     request.log.error({ error, requesterId, otherUserId }, "failed to create DM conversation");
     return reply.code(500).send({ error: "internal error" });
-  } finally {
-    client.release();
   }
 });
 
@@ -821,59 +844,39 @@ app.post("/conversations", async (request, reply) => {
 
   const body = request.body || {};
   const type = normalizeType(body.type);
-  const classId = body.classId || null;
-  const groupId = body.groupId || null;
 
-  const members = Array.isArray(body.memberUserIds)
-    ? body.memberUserIds.map((item) => String(item).trim()).filter(Boolean)
-    : [];
-
-  const memberUserIds = [...new Set([...members, requesterId])];
+  const memberUserIds = uniqueUserIds(Array.isArray(body.memberUserIds) ? body.memberUserIds : []);
 
   if (!type) {
     return reply.code(400).send({ error: "type must be DM, CLASS, or GROUP" });
   }
 
-  if (memberUserIds.length === 0) {
-    return reply.code(400).send({ error: "memberUserIds must include at least one user" });
+  if (type !== "DM") {
+    return reply.code(403).send({ error: "only DM conversations can be created from this endpoint" });
   }
 
-  if (type === "DM" && memberUserIds.length !== 2) {
+  if (memberUserIds.length !== 2) {
     return reply.code(400).send({ error: "DM conversations must include exactly two members" });
   }
 
-  const client = await pool.connect();
+  if (!memberUserIds.includes(requesterId)) {
+    return reply.code(403).send({ error: "memberUserIds must include the authenticated user" });
+  }
+
+  const otherUserId = memberUserIds.find((userId) => userId !== requesterId) || "";
+  if (!otherUserId) {
+    return reply.code(400).send({ error: "cannot create DM with yourself" });
+  }
+
   try {
-    await client.query("BEGIN");
-
-    const conversationResult = await client.query(
-      `INSERT INTO conversations (type, class_id, group_id)
-       VALUES ($1, $2, $3)
-       RETURNING id, type, class_id, group_id, created_at`,
-      [type, classId, groupId],
-    );
-
-    const conversation = conversationResult.rows[0];
-    for (const userId of memberUserIds) {
-      await client.query(
-        `INSERT INTO conversation_members (conversation_id, user_id)
-         VALUES ($1, $2)
-         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
-        [conversation.id, userId],
-      );
+    const payload = await createOrGetDmConversation(requesterId, otherUserId);
+    if (payload.created) {
+      return reply.code(201).send(payload);
     }
-
-    await client.query("COMMIT");
-    return reply.code(201).send({
-      conversation,
-      memberUserIds,
-    });
+    return reply.send(payload);
   } catch (error) {
-    await client.query("ROLLBACK");
     request.log.error({ error }, "failed to create conversation");
     return reply.code(500).send({ error: "internal error" });
-  } finally {
-    client.release();
   }
 });
 
@@ -1009,6 +1012,10 @@ app.get("/users/:userId/unread", async (request, reply) => {
 });
 
 async function start() {
+  if (!internalServiceToken) {
+    throw new Error("INTERNAL_SERVICE_TOKEN must be set");
+  }
+
   await app.register(cors, { origin: true });
   await ensureSchema();
   await connectProducer();
