@@ -48,9 +48,12 @@ Gateway verifies Auth0 access tokens and forwards trusted headers:
 - `POST /api/messages/conversations/:conversationId/read` (member only)
 - `GET /api/messages/users/:userId/unread` (self only)
 
-## Internal Service-to-Service
-- `POST /internal/group-conversations/sync` on messaging-service (requires `x-internal-token`)
-  - Used by class-service to create/update/delete GROUP conversations as group membership changes.
+## Internal Eventing
+- GROUP conversation lifecycle is synchronized by `messaging-service` consuming Kafka topics:
+  - `group.created`
+  - `group.member.added`
+  - `group.member.left`
+  - `group.disbanded`
 
 ## Realtime (Socket.IO)
 - URL: `/ws/socket.io`

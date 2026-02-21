@@ -88,9 +88,6 @@ services:
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@class-db:5432/class_db
       - KAFKA_BROKER=kafka:9092
       - INGEST_TOKEN=${INGEST_TOKEN:?set INGEST_TOKEN}
-      - MESSAGING_SERVICE_URL=http://messaging-service:3004
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
-      - SYNC_REQUEST_TIMEOUT_MS=${SYNC_REQUEST_TIMEOUT_MS:-5000}
       - LOG_LEVEL=info
     depends_on:
       - class-db
@@ -107,7 +104,6 @@ services:
       - KAFKA_BROKER=kafka:9092
       - AUTH0_ISSUER_BASE_URL=${AUTH0_ISSUER_BASE_URL:-}
       - AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-}
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}
       - LOG_LEVEL=info
     depends_on:
       - messaging-db

@@ -19,16 +19,19 @@ const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: 3,
   enableAutoPipelining: true,
 });
+const kafkaBroker = String(process.env.KAFKA_BROKER || "").trim();
+const groupEventsConsumerGroup = String(process.env.GROUP_EVENTS_CONSUMER_GROUP || "messaging-group-sync-v1").trim() || "messaging-group-sync-v1";
+const groupLifecycleTopics = ["group.created", "group.member.added", "group.member.left", "group.disbanded"];
 
 const auth0IssuerBaseUrl = String(process.env.AUTH0_ISSUER_BASE_URL || "").trim();
 const auth0Audience = String(process.env.AUTH0_AUDIENCE || "").trim();
 const auth0Configured = Boolean(auth0IssuerBaseUrl && auth0Audience);
 const issuer = auth0IssuerBaseUrl.endsWith("/") ? auth0IssuerBaseUrl : `${auth0IssuerBaseUrl}/`;
 const jwks = auth0Configured ? createRemoteJWKSet(new URL(`${issuer}.well-known/jwks.json`)) : null;
-const internalServiceToken = String(process.env.INTERNAL_SERVICE_TOKEN || "").trim();
 
 let producer = null;
 let io = null;
+let groupEventsConsumerRunning = false;
 
 function getRequesterUserId(request) {
   const raw = request.headers["x-user-id"];
@@ -48,17 +51,13 @@ function requireRequesterUserId(request, reply) {
   return userId;
 }
 
-function requireInternalToken(request, reply) {
-  const provided = request.headers["x-internal-token"];
-  if (!provided || provided !== internalServiceToken) {
-    reply.code(401).send({ error: "invalid internal token" });
-    return false;
-  }
-  return true;
-}
-
 function normalizeUserId(value) {
   return String(value || "").trim();
+}
+
+function normalizeOptionalClassId(value) {
+  const normalized = String(value || "").trim();
+  return normalized || null;
 }
 
 function looksLikeUuid(value) {
@@ -129,14 +128,13 @@ function conversationRoom(conversationId) {
 }
 
 async function connectProducer() {
-  const broker = process.env.KAFKA_BROKER;
-  if (!broker) {
+  if (!kafkaBroker) {
     app.log.warn("KAFKA_BROKER is not set; events are disabled");
     return;
   }
 
   try {
-    const kafka = new Kafka({ clientId: "messaging-service", brokers: [broker] });
+    const kafka = new Kafka({ clientId: "messaging-service", brokers: [kafkaBroker] });
     producer = kafka.producer();
     await producer.connect();
     app.log.info("connected to kafka");
@@ -176,6 +174,330 @@ async function publish(topic, key, payload) {
     });
   } catch (error) {
     app.log.error({ error, topic }, "failed to publish event");
+  }
+}
+
+async function loadGroupConversationForUpdate(groupId, client = pool) {
+  const result = await client.query(
+    `SELECT id, type, class_id, group_id, created_at
+     FROM conversations
+     WHERE type = 'GROUP'
+       AND group_id = $1
+     FOR UPDATE`,
+    [groupId],
+  );
+  return result.rowCount > 0 ? result.rows[0] : null;
+}
+
+async function ensureGroupConversation({ groupId, classId, client = pool }) {
+  const normalizedClassId = normalizeOptionalClassId(classId);
+  const existing = await loadGroupConversationForUpdate(groupId, client);
+  if (!existing) {
+    const inserted = await client.query(
+      `INSERT INTO conversations (type, class_id, group_id)
+       VALUES ('GROUP', $1, $2)
+       RETURNING id, type, class_id, group_id, created_at`,
+      [normalizedClassId, groupId],
+    );
+    return inserted.rows[0];
+  }
+
+  if (!normalizedClassId || existing.class_id === normalizedClassId) {
+    return existing;
+  }
+
+  const updated = await client.query(
+    `UPDATE conversations
+     SET class_id = $2
+     WHERE id = $1
+     RETURNING id, type, class_id, group_id, created_at`,
+    [existing.id, normalizedClassId],
+  );
+  return updated.rows[0];
+}
+
+async function clearMemberConversationState(conversationId, userId) {
+  try {
+    const pipeline = redis.pipeline();
+    pipeline.hdel(unreadHashKey(userId), conversationId);
+    pipeline.hdel(conversationPresenceCountKey(conversationId), userId);
+    pipeline.srem(conversationPresenceSetKey(conversationId), userId);
+    await pipeline.exec();
+  } catch (error) {
+    app.log.warn({ error, conversationId, userId }, "failed to clear member conversation state");
+  }
+}
+
+async function clearConversationState(conversationId, memberUserIds) {
+  try {
+    const users = uniqueUserIds(memberUserIds);
+    const pipeline = redis.pipeline();
+    pipeline.del(messageCacheKey(conversationId));
+    pipeline.del(conversationPresenceSetKey(conversationId));
+    pipeline.del(conversationPresenceCountKey(conversationId));
+    for (const userId of users) {
+      pipeline.hdel(unreadHashKey(userId), conversationId);
+    }
+    await pipeline.exec();
+  } catch (error) {
+    app.log.warn({ error, conversationId }, "failed to clear deleted conversation state");
+  }
+}
+
+async function applyGroupCreatedEvent(payload) {
+  const groupId = String((payload || {}).groupId || "").trim();
+  const classId = normalizeOptionalClassId((payload || {}).classId);
+  const ownerUserId = normalizeUserId((payload || {}).ownerUserId);
+
+  if (!looksLikeUuid(groupId)) {
+    app.log.warn({ payload }, "skipping group.created with invalid groupId");
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const conversation = await ensureGroupConversation({ groupId, classId, client });
+    if (ownerUserId) {
+      await client.query(
+        `INSERT INTO conversation_members (conversation_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+        [conversation.id, ownerUserId],
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function applyGroupMemberAddedEvent(payload) {
+  const groupId = String((payload || {}).groupId || "").trim();
+  const classId = normalizeOptionalClassId((payload || {}).classId);
+  const userId = normalizeUserId((payload || {}).userId);
+
+  if (!looksLikeUuid(groupId) || !userId) {
+    app.log.warn({ payload }, "skipping group.member.added with invalid payload");
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const conversation = await ensureGroupConversation({ groupId, classId, client });
+    await client.query(
+      `INSERT INTO conversation_members (conversation_id, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversation.id, userId],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function applyGroupMemberLeftEvent(payload) {
+  const groupId = String((payload || {}).groupId || "").trim();
+  const userId = normalizeUserId((payload || {}).userId);
+
+  if (!looksLikeUuid(groupId) || !userId) {
+    app.log.warn({ payload }, "skipping group.member.left with invalid payload");
+    return;
+  }
+
+  let conversationId = null;
+  let removed = false;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const conversation = await loadGroupConversationForUpdate(groupId, client);
+    if (!conversation) {
+      await client.query("COMMIT");
+      return;
+    }
+
+    const removedResult = await client.query(
+      `DELETE FROM conversation_members
+       WHERE conversation_id = $1 AND user_id = $2`,
+      [conversation.id, userId],
+    );
+
+    conversationId = conversation.id;
+    removed = removedResult.rowCount > 0;
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (removed && conversationId) {
+    await clearMemberConversationState(conversationId, userId);
+  }
+}
+
+async function applyGroupDisbandedEvent(payload) {
+  const groupId = String((payload || {}).groupId || "").trim();
+  if (!looksLikeUuid(groupId)) {
+    app.log.warn({ payload }, "skipping group.disbanded with invalid groupId");
+    return;
+  }
+
+  let deletedConversationId = null;
+  let memberUserIds = [];
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const conversation = await loadGroupConversationForUpdate(groupId, client);
+    if (!conversation) {
+      await client.query("COMMIT");
+      return;
+    }
+
+    const membersResult = await client.query(
+      `SELECT user_id
+       FROM conversation_members
+       WHERE conversation_id = $1`,
+      [conversation.id],
+    );
+    memberUserIds = membersResult.rows.map((row) => row.user_id);
+
+    await client.query(`DELETE FROM conversations WHERE id = $1`, [conversation.id]);
+    await client.query("COMMIT");
+    deletedConversationId = conversation.id;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (!deletedConversationId) {
+    return;
+  }
+
+  await clearConversationState(deletedConversationId, memberUserIds);
+  if (io) {
+    io.to(conversationRoom(deletedConversationId)).emit("conversation:deleted", {
+      conversationId: deletedConversationId,
+      reason: "group_disbanded",
+    });
+  }
+}
+
+async function handleGroupLifecycleEvent(topic, payload) {
+  if (topic === "group.created") {
+    await applyGroupCreatedEvent(payload);
+    return;
+  }
+
+  if (topic === "group.member.added") {
+    await applyGroupMemberAddedEvent(payload);
+    return;
+  }
+
+  if (topic === "group.member.left") {
+    await applyGroupMemberLeftEvent(payload);
+    return;
+  }
+
+  if (topic === "group.disbanded") {
+    await applyGroupDisbandedEvent(payload);
+  }
+}
+
+async function ensureGroupLifecycleTopics(kafka) {
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    const metadata = await admin.fetchTopicMetadata();
+    const existingTopics = new Set((metadata.topics || []).map((topic) => topic.name));
+    const missingTopics = groupLifecycleTopics.filter((topic) => !existingTopics.has(topic));
+
+    if (missingTopics.length === 0) {
+      return;
+    }
+
+    await admin.createTopics({
+      waitForLeaders: true,
+      topics: missingTopics.map((topic) => ({
+        topic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      })),
+    });
+  } catch (error) {
+    app.log.warn({ error }, "failed to ensure group lifecycle topics");
+  } finally {
+    try {
+      await admin.disconnect();
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+async function startGroupLifecycleConsumer() {
+  if (!kafkaBroker) {
+    app.log.warn("KAFKA_BROKER is not set; group lifecycle consumer disabled");
+    return;
+  }
+
+  const kafka = new Kafka({ clientId: "messaging-service-group-lifecycle", brokers: [kafkaBroker] });
+  const consumer = kafka.consumer({ groupId: groupEventsConsumerGroup });
+
+  try {
+    await ensureGroupLifecycleTopics(kafka);
+    await consumer.connect();
+    for (const topic of groupLifecycleTopics) {
+      await consumer.subscribe({ topic, fromBeginning: true });
+    }
+
+    consumer
+      .run({
+        eachMessage: async ({ topic, message }) => {
+          const text = message.value ? message.value.toString("utf8") : "";
+          if (!text) {
+            return;
+          }
+
+          let payload;
+          try {
+            payload = JSON.parse(text);
+          } catch (_error) {
+            app.log.warn({ topic, text }, "received invalid json group lifecycle event");
+            return;
+          }
+
+          try {
+            await handleGroupLifecycleEvent(topic, payload);
+          } catch (error) {
+            app.log.error({ error, topic, payload }, "failed to process group lifecycle event");
+          }
+        },
+      })
+      .catch((error) => {
+        groupEventsConsumerRunning = false;
+        app.log.error({ error }, "group lifecycle consumer crashed");
+      });
+
+    groupEventsConsumerRunning = true;
+    app.log.info({ topics: groupLifecycleTopics, groupId: groupEventsConsumerGroup }, "group lifecycle consumer is running");
+  } catch (error) {
+    app.log.error({ error }, "failed to start group lifecycle consumer");
   }
 }
 
@@ -614,105 +936,12 @@ function initSocketServer() {
 app.get("/health", async () => {
   await pool.query("SELECT 1");
   await redis.ping();
-  return { status: "ok", service: "messaging-service", auth0Configured };
-});
-
-app.post("/internal/group-conversations/sync", async (request, reply) => {
-  if (!requireInternalToken(request, reply)) {
-    return;
-  }
-
-  const body = request.body || {};
-  const groupId = String(body.groupId || "").trim();
-  const classId = String(body.classId || "").trim() || null;
-  const memberUserIds = uniqueUserIds(Array.isArray(body.memberUserIds) ? body.memberUserIds : []);
-
-  if (!groupId) {
-    return reply.code(400).send({ error: "groupId is required" });
-  }
-
-  if (!looksLikeUuid(groupId)) {
-    return reply.code(400).send({ error: "groupId must be a valid UUID" });
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const existingResult = await client.query(
-      `SELECT id, type, class_id, group_id, created_at
-       FROM conversations
-       WHERE type = 'GROUP'
-         AND group_id = $1
-       FOR UPDATE`,
-      [groupId],
-    );
-
-    let conversation = existingResult.rowCount > 0 ? existingResult.rows[0] : null;
-
-    if (memberUserIds.length === 0) {
-      if (conversation) {
-        await client.query(`DELETE FROM conversations WHERE id = $1`, [conversation.id]);
-      }
-
-      await client.query("COMMIT");
-      return reply.send({
-        groupId,
-        deleted: Boolean(conversation),
-      });
-    }
-
-    if (!conversation) {
-      const inserted = await client.query(
-        `INSERT INTO conversations (type, class_id, group_id)
-         VALUES ('GROUP', $1, $2)
-         RETURNING id, type, class_id, group_id, created_at`,
-        [classId, groupId],
-      );
-      conversation = inserted.rows[0];
-    } else if (classId && conversation.class_id !== classId) {
-      const updated = await client.query(
-        `UPDATE conversations
-         SET class_id = $2
-         WHERE id = $1
-         RETURNING id, type, class_id, group_id, created_at`,
-        [conversation.id, classId],
-      );
-      conversation = updated.rows[0];
-    }
-
-    for (const userId of memberUserIds) {
-      await client.query(
-        `INSERT INTO conversation_members (conversation_id, user_id)
-         VALUES ($1, $2)
-         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
-        [conversation.id, userId],
-      );
-    }
-
-    await client.query(
-      `DELETE FROM conversation_members
-       WHERE conversation_id = $1
-         AND NOT (user_id = ANY($2::text[]))`,
-      [conversation.id, memberUserIds],
-    );
-
-    await client.query("COMMIT");
-
-    const finalMembers = await getConversationMemberIds(conversation.id);
-
-    return reply.send({
-      groupId,
-      conversation: formatConversationRow(conversation),
-      memberUserIds: finalMembers,
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    request.log.error({ error, groupId }, "failed to sync group conversation");
-    return reply.code(500).send({ error: "internal error" });
-  } finally {
-    client.release();
-  }
+  return {
+    status: "ok",
+    service: "messaging-service",
+    auth0Configured,
+    groupEventsConsumerRunning,
+  };
 });
 
 app.get("/conversations", async (request, reply) => {
@@ -1012,13 +1241,10 @@ app.get("/users/:userId/unread", async (request, reply) => {
 });
 
 async function start() {
-  if (!internalServiceToken) {
-    throw new Error("INTERNAL_SERVICE_TOKEN must be set");
-  }
-
   await app.register(cors, { origin: true });
   await ensureSchema();
   await connectProducer();
+  await startGroupLifecycleConsumer();
   initSocketServer();
   await app.listen({ port, host: "0.0.0.0" });
 }

@@ -13,9 +13,6 @@ const app = fastify({
 const port = Number(process.env.PORT || 3003);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ingestToken = String(process.env.INGEST_TOKEN || "").trim();
-const messagingServiceUrl = String(process.env.MESSAGING_SERVICE_URL || "http://messaging-service:3004").replace(/\/$/, "");
-const internalServiceToken = String(process.env.INTERNAL_SERVICE_TOKEN || "").trim();
-const syncTimeoutMs = Math.min(Math.max(Number(process.env.SYNC_REQUEST_TIMEOUT_MS || 5000) || 5000, 500), 30000);
 const defaultSectionMaxGroupSize = Math.min(
   Math.max(Number(process.env.DEFAULT_SECTION_MAX_GROUP_SIZE || 4) || 4, 2),
   20,
@@ -384,21 +381,6 @@ async function loadGroupForUpdate(groupId, client) {
   return result.rows[0];
 }
 
-async function loadGroupMembers(groupId, client = pool) {
-  if (!looksLikeUuid(groupId)) {
-    return [];
-  }
-
-  const result = await client.query(
-    `SELECT user_id
-     FROM group_members
-     WHERE group_id = $1
-     ORDER BY joined_at ASC`,
-    [groupId],
-  );
-  return result.rows.map((row) => row.user_id);
-}
-
 async function countGroupMembers(groupId, client = pool) {
   if (!looksLikeUuid(groupId)) {
     return 0;
@@ -461,62 +443,6 @@ async function lockUserSectionMembership({
     `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
     [`${normalizedClassId}:${normalizedUserId}`, sectionKey],
   );
-}
-
-async function fetchWithTimeout(url, init, timeoutMs = syncTimeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function syncGroupConversation({ groupId, classId, memberUserIds }) {
-  if (!messagingServiceUrl || !internalServiceToken) {
-    return;
-  }
-
-  try {
-    const response = await fetchWithTimeout(`${messagingServiceUrl}/internal/group-conversations/sync`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-internal-token": internalServiceToken,
-      },
-      body: JSON.stringify({
-        groupId,
-        classId,
-        memberUserIds: Array.isArray(memberUserIds) ? memberUserIds : [],
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      app.log.warn(
-        {
-          groupId,
-          classId,
-          statusCode: response.status,
-          responseBody: text,
-        },
-        "failed to sync group conversation",
-      );
-    }
-  } catch (error) {
-    if (error && error.name === "AbortError") {
-      app.log.warn({ groupId, classId, timeoutMs: syncTimeoutMs }, "timed out calling messaging-service for group sync");
-      return;
-    }
-    app.log.warn({ error, groupId, classId }, "failed to call messaging-service for group sync");
-  }
 }
 
 app.get("/health", async () => {
@@ -1006,15 +932,8 @@ app.post("/:classId/groups", async (request, reply) => {
   }
 
   const group = await loadGroup(createdGroup.id);
-  const memberUserIds = await loadGroupMembers(createdGroup.id);
 
-  await syncGroupConversation({
-    groupId: createdGroup.id,
-    classId,
-    memberUserIds,
-  });
-
-  await publish("group.created", classId, {
+  await publish("group.created", createdGroup.id, {
     groupId: createdGroup.id,
     classId,
     ownerUserId,
@@ -1202,13 +1121,6 @@ app.post("/groups/:groupId/requests/:userId/approve", async (request, reply) => 
     client.release();
   }
 
-  const memberUserIds = await loadGroupMembers(groupId);
-  await syncGroupConversation({
-    groupId,
-    classId: group.class_id,
-    memberUserIds,
-  });
-
   await publish("group.member.added", groupId, {
     groupId,
     classId: group.class_id,
@@ -1329,25 +1241,12 @@ app.post("/groups/:groupId/leave", async (request, reply) => {
   }
 
   if (disbanded) {
-    await syncGroupConversation({
-      groupId,
-      classId: group.class_id,
-      memberUserIds: [],
-    });
-
     await publish("group.disbanded", groupId, {
       groupId,
       classId: group.class_id,
       disbandedByUserId: requesterId,
     });
   } else {
-    const memberUserIds = await loadGroupMembers(groupId);
-    await syncGroupConversation({
-      groupId,
-      classId: group.class_id,
-      memberUserIds,
-    });
-
     await publish("group.member.left", groupId, {
       groupId,
       classId: group.class_id,
@@ -1460,12 +1359,6 @@ app.delete("/groups/:groupId", async (request, reply) => {
     client.release();
   }
 
-  await syncGroupConversation({
-    groupId,
-    classId: group.class_id,
-    memberUserIds: [],
-  });
-
   await publish("group.disbanded", groupId, {
     groupId,
     classId: group.class_id,
@@ -1478,10 +1371,6 @@ app.delete("/groups/:groupId", async (request, reply) => {
 async function start() {
   if (!ingestToken) {
     throw new Error("INGEST_TOKEN must be set");
-  }
-
-  if (messagingServiceUrl && !internalServiceToken) {
-    throw new Error("INTERNAL_SERVICE_TOKEN must be set");
   }
 
   await app.register(cors, { origin: true });

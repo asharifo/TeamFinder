@@ -38,7 +38,6 @@ This repository now includes **Phase 1 + Phase 2 + Phase 3 core workflows**:
    ```
    Required secure values in `.env`:
    - `POSTGRES_PASSWORD`
-   - `INTERNAL_SERVICE_TOKEN`
    - `INGEST_TOKEN`
    - `MINIO_ROOT_USER`
    - `MINIO_ROOT_PASSWORD`
